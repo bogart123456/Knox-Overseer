@@ -1,0 +1,54 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Test and tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.coverage
+.coverage.*
+htmlcov/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# Build and packaging artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# PyInstaller
+*.spec.bak
+
+# Logs and runtime output
+logs/*.log
+logs/*.txt
+*.log
+
+# Local runtime/data artifacts
+data/backups/*
+!data/backups/.gitkeep
+
+# Local environment/config overrides
+.env
+.env.*
+*.local
+
+# Project-specific temp/debug files
+stats_cache.json
+players_cache.json
