@@ -8,11 +8,9 @@ from PySide6.QtWidgets import (
     QPushButton,
     QLineEdit,
     QFileDialog,
-    QComboBox,
-    QSpinBox,
-    QCheckBox,
 )
-from PySide6.QtCore import Signal, QSettings
+from PySide6.QtCore import Signal, Qt
+from .widgets import CheckMarkBox, NoWheelComboBox, NoWheelSpinBox
 from .settings_store import get_app_settings
 
 
@@ -43,7 +41,7 @@ class BackupTab(QWidget):
         interval_label.setFixedWidth(label_width)
         options_grid.addWidget(interval_label, 0, 0)
 
-        self.interval_combo = QComboBox()
+        self.interval_combo = NoWheelComboBox()
         self.interval_combo.addItems([
             "Off",
             "5 minutes",
@@ -65,7 +63,7 @@ class BackupTab(QWidget):
         max_backups_label.setFixedWidth(label_width)
         options_grid.addWidget(max_backups_label, 1, 0)
 
-        self.max_backups_spin = QSpinBox()
+        self.max_backups_spin = NoWheelSpinBox()
         self.max_backups_spin.setRange(1, 999)
         self.max_backups_spin.setValue(20)
         self.max_backups_spin.setMinimumWidth(90)
@@ -75,17 +73,15 @@ class BackupTab(QWidget):
         on_start_label.setFixedWidth(label_width)
         options_grid.addWidget(on_start_label, 2, 0)
 
-        self.backup_on_start_check = QCheckBox()
-        self.backup_on_start_check.setChecked(True)
-        options_grid.addWidget(self.backup_on_start_check, 2, 1)
+        self.backup_on_start_check = CheckMarkBox(checked=True)
+        options_grid.addWidget(self.backup_on_start_check, 2, 1, Qt.AlignLeft | Qt.AlignVCenter)
 
         on_version_label = QLabel("Backup On Version Change:")
         on_version_label.setFixedWidth(label_width)
         options_grid.addWidget(on_version_label, 3, 0)
 
-        self.backup_on_version_check = QCheckBox()
-        self.backup_on_version_check.setChecked(True)
-        options_grid.addWidget(self.backup_on_version_check, 3, 1)
+        self.backup_on_version_check = CheckMarkBox(checked=True)
+        options_grid.addWidget(self.backup_on_version_check, 3, 1, Qt.AlignLeft | Qt.AlignVCenter)
 
         options_grid.setColumnStretch(1, 1)
         layout.addLayout(options_grid)

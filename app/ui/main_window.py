@@ -1,8 +1,8 @@
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
-    QPushButton, QTabWidget, QMessageBox
+    QPushButton, QTabWidget, QMessageBox, QApplication, QProgressBar
 )
-from PySide6.QtCore import QTimer, Signal, QSettings, QLockFile
+from PySide6.QtCore import Qt, QTimer, Signal, QSettings, QLockFile
 import subprocess
 import os
 import sys
@@ -25,6 +25,8 @@ from .console_tab import ConsoleTab
 from .settings_tab import SettingsTab
 from .backup_tab import BackupTab
 from .discord_tab import DiscordTab
+from .ini_tab import IniTab
+from .sandbox_tab import SandboxVarsTab
 from .settings_store import get_app_settings
 
 class MainWindow(QMainWindow):
@@ -66,6 +68,17 @@ class MainWindow(QMainWindow):
         self._discord_repeat_sending = False
         self._server_lock = None
         self._server_lock_mutex = None
+        self._startup_tasks = []
+        self._startup_total_steps = 0
+        self._startup_completed_steps = 0
+        self._startup_preloading = False
+        self._active_ini_path = ""
+        self._loaded_for_ini = {
+            "mods": None,
+            "logs": None,
+            "ini": None,
+            "sandbox": None,
+        }
         self._kernel32 = self._init_kernel32_api()
         self.output_signal.connect(self.append_to_terminal)
         self.setWindowTitle("Knox Overseer")
@@ -76,6 +89,7 @@ class MainWindow(QMainWindow):
 
     def setup_ui(self):
         central_widget = QWidget()
+        self._central_widget = central_widget
         self.setCentralWidget(central_widget)
 
         main_layout = QVBoxLayout(central_widget)
@@ -113,29 +127,69 @@ class MainWindow(QMainWindow):
         self.console_tab = ConsoleTab()
         self.backup_tab = BackupTab()
         self.discord_tab = DiscordTab()
+        self.ini_tab = IniTab()
+        self.sandbox_tab = SandboxVarsTab()
 
         # Connect signals
-        self.settings_tab.ini_selected.connect(self.mods_tab.load_mods)
-        self.settings_tab.ini_selected.connect(self.stats_tab.set_ini_path)
-        self.settings_tab.ini_selected.connect(self.refresh_logs_list)
-        self.settings_tab.ini_selected.connect(self._update_server_name_label)
-        self.settings_tab.ini_selected.connect(self.backup_tab.set_ini_path)
-        self.settings_tab.ini_selected.connect(lambda _path: self._apply_builtin_backup_settings())
-
-        # Initial load from default/current INI path.
-        self._update_server_name_label(self.settings_tab.ini_path.text())
-        self.stats_tab.set_ini_path(self.settings_tab.ini_path.text())
-        self.mods_tab.load_mods(self.settings_tab.ini_path.text())
-        self.refresh_logs_list(self.settings_tab.ini_path.text())
-        self.backup_tab.set_ini_path(self.settings_tab.ini_path.text())
+        self.settings_tab.ini_selected.connect(self._on_ini_selected)
 
         # Add tabs
         self.tab_widget.addTab(self.console_tab, "Console")
         self.tab_widget.addTab(self.stats_tab, "Stats")
         self.tab_widget.addTab(self.mods_tab, "Mods")
+        self.tab_widget.addTab(self.ini_tab, "INI")
+        self.tab_widget.addTab(self.sandbox_tab, "Sandbox")
         self.tab_widget.addTab(self.backup_tab, "Backup")
         self.tab_widget.addTab(self.discord_tab, "Discord")
         self.tab_widget.addTab(self.settings_tab, "Settings")
+
+        self._setup_loading_overlay()
+
+        # Keep launch responsive by deferring heavier I/O and parsing tasks.
+        self._schedule_startup_loads()
+
+    def _setup_loading_overlay(self):
+        self._loading_overlay = QWidget(self._central_widget)
+        self._loading_overlay.setStyleSheet("background-color: rgba(10, 10, 10, 195);")
+
+        layout = QVBoxLayout(self._loading_overlay)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+        layout.addStretch(1)
+
+        self._loading_title = QLabel("Preparing Knox Overseer")
+        self._loading_title.setStyleSheet("font-size: 16px; font-weight: 700; color: #f0f0f0;")
+        self._loading_title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self._loading_title)
+
+        self._loading_message = QLabel("Loading modules and pages...")
+        self._loading_message.setStyleSheet("font-size: 11px; color: #d3d3d3;")
+        self._loading_message.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self._loading_message)
+
+        self._loading_progress = QProgressBar()
+        self._loading_progress.setRange(0, 100)
+        self._loading_progress.setValue(0)
+        self._loading_progress.setFixedWidth(320)
+        self._loading_progress.setTextVisible(True)
+
+        progress_row = QHBoxLayout()
+        progress_row.addStretch(1)
+        progress_row.addWidget(self._loading_progress)
+        progress_row.addStretch(1)
+        layout.addLayout(progress_row)
+        layout.addStretch(2)
+
+        self._loading_overlay.hide()
+
+    def _show_loading_overlay(self, message: str):
+        self._loading_message.setText(message)
+        self._loading_overlay.setGeometry(self._central_widget.rect())
+        self._loading_overlay.show()
+        self._loading_overlay.raise_()
+
+    def _hide_loading_overlay(self):
+        self._loading_overlay.hide()
 
     def connect_signals(self):
         self.button_start.clicked.connect(self.start_server)
@@ -171,6 +225,9 @@ class MainWindow(QMainWindow):
         self.discord_tab.send_webhook_requested.connect(self._send_discord_webhook)
         self.discord_tab.repeat_settings_changed.connect(self._update_discord_repeat_timer)
         self.discord_send_status_signal.connect(self.discord_tab.set_send_status)
+        self.mods_tab.refresh_requested.connect(self._refresh_mods_with_overlay)
+        self.settings_tab.sandbox_edit_requested.connect(self._open_sandbox_editor)
+        self.tab_widget.currentChanged.connect(self._on_tab_changed)
 
         self.discord_repeat_timer = QTimer()
         self.discord_repeat_timer.timeout.connect(self._handle_discord_repeat_push)
@@ -178,9 +235,143 @@ class MainWindow(QMainWindow):
         self._update_control_buttons()
         self._update_mod_actions_state()
         self._update_runtime_lock_states()
-        self._apply_builtin_backup_settings()
         self._refresh_discord_preview()
         self._update_discord_repeat_timer()
+
+    def _set_startup_notice(self, text: str):
+        self._show_loading_overlay(text)
+
+    def _set_startup_progress(self, completed: int, total: int):
+        total = max(1, total)
+        self._loading_progress.setRange(0, total)
+        self._loading_progress.setValue(max(0, min(completed, total)))
+        self._loading_progress.setFormat(f"Step {completed}/{total}")
+
+    def _schedule_startup_loads(self):
+        ini_path = self.settings_tab.ini_path.text().strip()
+        # Make launch near-instant, then preload heavy pages immediately after show.
+        self._on_ini_selected(ini_path, load_visible_tab=False)
+        self._startup_tasks = [
+            ("Preparing: loading mods...", self._load_mods_if_needed),
+            ("Preparing: scanning logs...", self._load_logs_if_needed),
+            ("Preparing: loading INI page...", self._load_ini_page_if_needed),
+            ("Preparing: loading Sandbox page...", self._load_sandbox_page_if_needed),
+            ("Preparing: syncing backup settings...", self._apply_builtin_backup_settings),
+        ]
+        self._startup_total_steps = len(self._startup_tasks)
+        self._startup_completed_steps = 0
+        QTimer.singleShot(0, self._start_startup_preload)
+
+    def _start_startup_preload(self):
+        if not self._startup_tasks:
+            return
+        self._startup_preloading = True
+        self._set_startup_progress(0, self._startup_total_steps)
+        self._set_startup_notice("Preparing modules and pages...")
+        QTimer.singleShot(0, self._run_next_startup_task)
+
+    def _run_next_startup_task(self):
+        if not self._startup_tasks:
+            self._set_startup_progress(self._startup_total_steps, self._startup_total_steps)
+            self._loading_progress.setFormat("Ready")
+            self._startup_preloading = False
+            self._hide_loading_overlay()
+            return
+
+        message, task = self._startup_tasks.pop(0)
+        self._startup_completed_steps += 1
+        self._set_startup_progress(self._startup_completed_steps, self._startup_total_steps)
+        self._set_startup_notice(message)
+        QApplication.processEvents()
+        try:
+            task()
+        except Exception as exc:
+            self.output_signal.emit(f"[Startup] Deferred task failed: {exc}")
+        QTimer.singleShot(0, self._run_next_startup_task)
+
+    def _on_ini_selected(self, ini_path, load_visible_tab=True):
+        ini_path = os.path.normpath((ini_path or "").strip()) if ini_path else ""
+        previous_ini_path = self._active_ini_path
+        self._active_ini_path = ini_path
+        ini_changed = ini_path != previous_ini_path
+
+        # Lightweight updates happen immediately.
+        self._update_server_name_label(ini_path)
+        self.stats_tab.set_ini_path(ini_path)
+        self.backup_tab.set_ini_path(ini_path)
+
+        # Invalidate heavy tab data only when INI actually changed.
+        if ini_changed:
+            self._loaded_for_ini["mods"] = None
+            self._loaded_for_ini["logs"] = None
+            self._loaded_for_ini["ini"] = None
+            self._loaded_for_ini["sandbox"] = None
+
+        # If the currently visible tab depends on INI, load it now.
+        if load_visible_tab:
+            current = self.tab_widget.currentWidget()
+            if current is self.mods_tab:
+                self._load_mods_if_needed()
+            elif current is self.console_tab:
+                self._load_logs_if_needed()
+            elif current is self.ini_tab:
+                self._load_ini_page_if_needed()
+            elif current is self.sandbox_tab:
+                self._load_sandbox_page_if_needed()
+
+    def _refresh_mods_with_overlay(self):
+        if self.mods_tab.mods_table.rowCount() == 0:
+            self._load_mods_if_needed()
+            return
+
+        self._show_loading_overlay("Loading mods...")
+        self._loading_progress.setRange(0, 0)
+        QApplication.processEvents()
+        try:
+            self.mods_tab.refresh_mods()
+        finally:
+            self._loading_progress.setRange(0, 100)
+            self._loading_progress.setValue(0)
+            self._loading_progress.setFormat("%p%")
+            self._hide_loading_overlay()
+
+    def _load_mods_if_needed(self):
+        if not self._active_ini_path:
+            return
+        if self._loaded_for_ini["mods"] == self._active_ini_path:
+            return
+        self.mods_tab.load_mods(self._active_ini_path)
+        self._loaded_for_ini["mods"] = self._active_ini_path
+
+    def _load_logs_if_needed(self):
+        if not self._active_ini_path:
+            return
+        if self._loaded_for_ini["logs"] == self._active_ini_path:
+            return
+        self.refresh_logs_list(self._active_ini_path)
+        self._loaded_for_ini["logs"] = self._active_ini_path
+
+    def _load_ini_page_if_needed(self):
+        if not self._active_ini_path:
+            return
+        if self._loaded_for_ini["ini"] == self._active_ini_path:
+            return
+        self.ini_tab.set_path(self._active_ini_path)
+        self._loaded_for_ini["ini"] = self._active_ini_path
+
+    def _load_sandbox_page_if_needed(self):
+        if not self._active_ini_path:
+            return
+        if self._loaded_for_ini["sandbox"] == self._active_ini_path:
+            return
+        sandbox_path = self.settings_tab.get_sandbox_vars_path(self._active_ini_path)
+        self.sandbox_tab.set_path(sandbox_path)
+        self._loaded_for_ini["sandbox"] = self._active_ini_path
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "_loading_overlay") and self._loading_overlay.isVisible():
+            self._loading_overlay.setGeometry(self._central_widget.rect())
 
     def _set_backup_status(self, text):
         self.backup_status_signal.emit(text)
@@ -407,6 +598,28 @@ class MainWindow(QMainWindow):
         is_active = self._is_server_active()
         self.settings_tab.set_runtime_lock(is_active)
         self.backup_tab.set_runtime_lock(is_active)
+        self.ini_tab.set_runtime_lock(is_active)
+        self.sandbox_tab.set_runtime_lock(is_active)
+
+    def _open_sandbox_editor(self, path: str) -> None:
+        """Load the SandboxVars file at *path* and switch to the Sandbox tab."""
+        self.sandbox_tab.set_path(path)
+        self.tab_widget.setCurrentWidget(self.sandbox_tab)
+
+    def _on_tab_changed(self, index: int) -> None:
+        if self._startup_preloading:
+            return
+        current = self.tab_widget.widget(index)
+        if current is self.console_tab:
+            self._load_logs_if_needed()
+        elif current is self.mods_tab:
+            self._load_mods_if_needed()
+        elif current is self.ini_tab:
+            self._load_ini_page_if_needed()
+            self.ini_tab.refresh_if_changed()
+        elif current is self.sandbox_tab:
+            self._load_sandbox_page_if_needed()
+            self.sandbox_tab.refresh_if_changed()
 
     def _get_logs_dir_from_ini(self, ini_path):
         # INI is typically .../Zomboid/Server/<name>.ini, logs are in .../Zomboid/Logs
@@ -628,6 +841,17 @@ class MainWindow(QMainWindow):
         changed_wids = payload.get('changed_wids', [])
         details_by_wid = payload.get('details_by_wid', {})
         self.mods_tab.mark_updated_workshop_ids(changed_wids, details_by_wid)
+        if changed_wids:
+            self._show_loading_overlay("Loading mods...")
+            self._loading_progress.setRange(0, 0)
+            QApplication.processEvents()
+            try:
+                self.mods_tab.refresh_mods(workshop_ids=set(changed_wids))
+            finally:
+                self._loading_progress.setRange(0, 100)
+                self._loading_progress.setValue(0)
+                self._loading_progress.setFormat("%p%")
+                self._hide_loading_overlay()
 
     def _run_mod_check(self):
         try:
@@ -995,6 +1219,7 @@ class MainWindow(QMainWindow):
         jar_path = os.path.normpath(os.path.join(server_dir, "java", "projectzomboid.jar"))
         if not os.path.exists(jar_path):
             self.output_signal.emit(f"JAR file not found at: {jar_path}")
+            self.output_signal.emit("Check that your selected server folder matches the installed Project Zomboid Dedicated Server version.")
             return
         # Construct command as list
         java_exe = os.path.join(server_dir, "jre64", "bin", "java.exe")

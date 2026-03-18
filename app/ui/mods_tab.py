@@ -1,31 +1,23 @@
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel, QTextEdit, QPushButton, QTableWidget, QTableWidgetItem, QInputDialog, QMessageBox, QHeaderView, QAbstractItemView
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from datetime import datetime
 import requests
 import re
+from .widgets import CheckMarkBox
 
 MANDATORY_WORKSHOP_ID = "3686757561"
 MANDATORY_MOD_ID = "KnoxOverseer"
-
-
-class CheckMarkBox(QPushButton):
-    def __init__(self, checked=False):
-        super().__init__()
-        self.setCheckable(True)
-        self.setProperty("modToggle", True)
-        self.setFixedSize(18, 18)
-        self.toggled.connect(self._sync_appearance)
-        self.setChecked(checked)
-
-    def _sync_appearance(self, checked):
-        self.setText("✓" if checked else "")
+STEAM_API_TIMEOUT_SECONDS = 8
 
 class ModsTab(QWidget):
+    refresh_requested = Signal()
+
     def __init__(self, settings_tab):
         super().__init__()
         self.settings_tab = settings_tab
         self.mod_data_list = []  # Store mod data for each row
         self.enabled_checkboxes = []  # Store checkboxes for enabled state
+        self._mod_details_cache = {}
         self.setup_ui()
 
     def setup_ui(self):
@@ -78,7 +70,7 @@ class ModsTab(QWidget):
         self.move_down_button.clicked.connect(self.move_down)
         buttons_layout.addWidget(self.move_down_button)
         self.refresh_mods_button = QPushButton("Refresh Mods")
-        self.refresh_mods_button.clicked.connect(self.refresh_mods)
+        self.refresh_mods_button.clicked.connect(self.refresh_requested.emit)
         buttons_layout.addWidget(self.refresh_mods_button)
         self.save_config_button = QPushButton("Save Config")
         self.save_config_button.clicked.connect(self.save_config)
@@ -116,13 +108,12 @@ class ModsTab(QWidget):
                     enabled_mods = set(mods_list)
 
             self.populate_mods_table(workshop_ids, enabled_mods, mods_list)
-            self.refresh_mods()  # Automatically refresh to fetch details
         except FileNotFoundError:
             return
         except Exception:
             return
 
-    def refresh_mods(self):
+    def refresh_mods(self, workshop_ids=None):
         # Collect unique Workshop IDs and their row indices
         wid_to_rows = {}
         for row in range(self.mods_table.rowCount()):
@@ -130,12 +121,14 @@ class ModsTab(QWidget):
             if workshop_id_item:
                 workshop_id = workshop_id_item.text()
                 if workshop_id:
+                    if workshop_ids is not None and workshop_id not in workshop_ids:
+                        continue
                     if workshop_id not in wid_to_rows:
                         wid_to_rows[workshop_id] = []
                     wid_to_rows[workshop_id].append(row)
         # Fetch and update for each unique Workshop ID
         for workshop_id, rows in wid_to_rows.items():
-            mod_data = self.fetch_mod_details(workshop_id)
+            mod_data = self.fetch_mod_details(workshop_id, use_cache=False)
             if mod_data:
                 for row in rows:
                     self.mod_data_list[row] = mod_data
@@ -268,14 +261,15 @@ class ModsTab(QWidget):
         self.mods_table.setItem(row_count, 3, QTableWidgetItem(updated_text))
 
         checkbox = CheckMarkBox(enabled)
+        checkbox.setChecked(lock_enabled or enabled)
+        if lock_enabled:
+            checkbox.setEnabled(False)
+        
         container = QWidget()
         layout = QHBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(checkbox, alignment=Qt.AlignCenter)
         self.mods_table.setCellWidget(row_count, 4, container)
-        if lock_enabled:
-            checkbox.setChecked(True)
-            checkbox.setEnabled(False)
         self.enabled_checkboxes.append(checkbox)
 
     def _is_mandatory_row(self, row):
@@ -285,6 +279,16 @@ class ModsTab(QWidget):
             return False
         return mod_item.text().strip() == MANDATORY_MOD_ID and wid_item.text().strip() == MANDATORY_WORKSHOP_ID
 
+    def _create_mod_data(self, title, description, creator, mod_ids, time_updated=0):
+        """Create a mod data dictionary with standard structure."""
+        return {
+            'title': title,
+            'description': description,
+            'creator': creator,
+            'time_updated': time_updated,
+            'mod_ids': mod_ids,
+        }
+
     def _ensure_mandatory_mod_present(self):
         for row in range(self.mods_table.rowCount()):
             if self._is_mandatory_row(row):
@@ -293,13 +297,12 @@ class ModsTab(QWidget):
                     self.enabled_checkboxes[row].setEnabled(False)
                 return
 
-        required_mod_data = {
-            'title': MANDATORY_MOD_ID,
-            'description': 'Required by Knox Overseer.',
-            'creator': 'Knox Overseer',
-            'time_updated': 0,
-            'mod_ids': [MANDATORY_MOD_ID],
-        }
+        required_mod_data = self._create_mod_data(
+            MANDATORY_MOD_ID,
+            'Required by Knox Overseer.',
+            'Knox Overseer',
+            [MANDATORY_MOD_ID]
+        )
         self._add_mod_row(
             MANDATORY_MOD_ID,
             MANDATORY_MOD_ID,
@@ -322,7 +325,7 @@ class ModsTab(QWidget):
         listed_mod_ids = set()
         for wid in workshop_ids:
             if wid.strip():
-                mod_data = self.fetch_mod_details(wid.strip())
+                mod_data = self.fetch_mod_details(wid.strip(), use_cache=True)
                 for mod_id in mod_data['mod_ids']:
                     clean_mod_id = (mod_id or "").strip()
                     if not clean_mod_id:
@@ -342,13 +345,12 @@ class ModsTab(QWidget):
             if mod_id in listed_mod_ids:
                 continue
 
-            local_mod_data = {
-                'title': mod_id,
-                'description': 'Local mod from Mods= (not linked to a Workshop item).',
-                'creator': 'Local',
-                'time_updated': 0,
-                'mod_ids': [mod_id],
-            }
+            local_mod_data = self._create_mod_data(
+                mod_id,
+                'Local mod from Mods= (not linked to a Workshop item).',
+                'Local',
+                [mod_id]
+            )
             self._add_mod_row(
                 mod_id,
                 mod_id,
@@ -365,7 +367,7 @@ class ModsTab(QWidget):
         if ok and workshop_id.strip():
             workshop_id = workshop_id.strip()
             # Fetch mod details from Steam API
-            mod_data = self.fetch_mod_details(workshop_id)
+            mod_data = self.fetch_mod_details(workshop_id, use_cache=False)
             for mod_id in mod_data['mod_ids']:
                 row_count = self.mods_table.rowCount()
                 self.mods_table.insertRow(row_count)
@@ -386,7 +388,30 @@ class ModsTab(QWidget):
             # Update workshop info box with the last added mod data
             self.update_workshop_info(mod_data)
 
-    def fetch_mod_details(self, workshop_id):
+    def _unique_mod_ids(self, raw_ids):
+        seen = set()
+        ordered = []
+        for item in raw_ids:
+            if item in seen:
+                continue
+            seen.add(item)
+            ordered.append(item)
+        return ordered
+
+    def fetch_mod_details(self, workshop_id, use_cache=True):
+        workshop_id = (workshop_id or "").strip()
+        if not workshop_id:
+            return {
+                'title': 'Unknown Workshop Item',
+                'description': 'Workshop ID is empty.',
+                'creator': 'Unknown',
+                'time_updated': 0,
+                'mod_ids': [],
+            }
+
+        if use_cache and workshop_id in self._mod_details_cache:
+            return self._mod_details_cache[workshop_id]
+
         url = "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/"
         data = {
             'itemcount': 1,
@@ -401,30 +426,47 @@ class ModsTab(QWidget):
             'mod_ids': [workshop_id]
         }
         try:
-            response = requests.post(url, data=data)
+            response = requests.post(url, data=data, timeout=STEAM_API_TIMEOUT_SECONDS)
             response.raise_for_status()
             json_data = response.json()
             details_list = json_data.get('response', {}).get('publishedfiledetails', [])
             if not details_list:
+                self._mod_details_cache[workshop_id] = fallback
                 return fallback
             details = details_list[0]
             if details.get('result') == 1:
                 description = details.get('description', '')
                 # Parse Mod IDs from description (case insensitive, can have spaces)
                 mod_ids_raw = re.findall(r'mod id[:\s]*([^\n]+)', description, re.IGNORECASE)
-                mod_ids = list(set([raw.strip() for raw in mod_ids_raw]))
+                # Clean markup, split common separators, and preserve source order.
+                mod_ids = []
+                for raw in mod_ids_raw:
+                    cleaned = re.sub(r'\[/?(?:code|b|i|u|br|p|div|span)[^\]]*\]', '', raw, flags=re.IGNORECASE)
+                    cleaned = cleaned.strip()
+                    if not cleaned:
+                        continue
+                    for token in re.split(r'[;,]', cleaned):
+                        mod_id = token.strip()
+                        if mod_id:
+                            mod_ids.append(mod_id)
+                mod_ids = self._unique_mod_ids(mod_ids)
                 if not mod_ids:
                     mod_ids = [workshop_id]  # Fallback to Workshop ID if no Mod ID found
-                return {
+                result = {
                     'title': details.get('title', f'Workshop {workshop_id}'),
                     'description': description,
                     'creator': details.get('creator', ''),
                     'time_updated': details.get('time_updated', 0),
                     'mod_ids': mod_ids
                 }
+                self._mod_details_cache[workshop_id] = result
+                return result
+            self._mod_details_cache[workshop_id] = fallback
             return fallback
         except Exception:
+            self._mod_details_cache[workshop_id] = fallback
             return fallback
+        self._mod_details_cache[workshop_id] = fallback
         return fallback
 
     def update_workshop_info(self, mod_data):

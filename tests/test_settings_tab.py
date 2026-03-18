@@ -1,3 +1,5 @@
+import os
+
 from app.ui.settings_tab import SettingsTab
 
 
@@ -29,3 +31,13 @@ def test_resolve_relative_path(qapp):
     tab = SettingsTab()
     resolved = tab.resolve_path(".")
     assert resolved
+
+
+def test_resolve_relative_path_in_frozen_mode(qapp, monkeypatch):
+    tab = SettingsTab()
+    monkeypatch.setattr("app.ui.settings_tab.sys.frozen", True, raising=False)
+    monkeypatch.setattr("app.ui.settings_tab.sys.executable", r"C:\\Games\\PZServer\\Knox Overseer.exe", raising=False)
+
+    resolved = tab.resolve_path("server")
+
+    assert resolved == os.path.normpath(r"C:\\Games\\PZServer\\server")

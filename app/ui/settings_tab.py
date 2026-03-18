@@ -6,6 +6,7 @@ from .settings_store import get_app_settings
 
 class SettingsTab(QWidget):
     ini_selected = Signal(str)
+    sandbox_edit_requested = Signal(str)
 
     def __init__(self):
         super().__init__()
@@ -66,6 +67,23 @@ class SettingsTab(QWidget):
         self.browse_button.clicked.connect(self.browse_ini_file)
         ini_layout.addWidget(self.browse_button)
         layout.addLayout(ini_layout)
+
+        # Sandbox Vars (derived from INI path)
+        sandbox_layout = QHBoxLayout()
+        sandbox_label = QLabel("Sandbox Vars:")
+        sandbox_label.setFixedWidth(label_width)
+        sandbox_layout.addWidget(sandbox_label)
+        self.sandbox_vars_path = QLineEdit()
+        self.sandbox_vars_path.setReadOnly(True)
+        self.sandbox_vars_path.setPlaceholderText("Derived from INI path above")
+        self.sandbox_vars_path.setStyleSheet("color: #999;")
+        sandbox_layout.addWidget(self.sandbox_vars_path)
+        self.edit_sandbox_button = QPushButton("Edit Vars")
+        self.edit_sandbox_button.setFixedWidth(button_width)
+        self.edit_sandbox_button.setEnabled(False)
+        self.edit_sandbox_button.clicked.connect(self._on_edit_sandbox_clicked)
+        sandbox_layout.addWidget(self.edit_sandbox_button)
+        layout.addLayout(sandbox_layout)
 
         # Server directory selection
         server_layout = QHBoxLayout()
@@ -205,6 +223,9 @@ class SettingsTab(QWidget):
 
         self._apply_auto_restart_lock()
 
+        # Update sandbox vars path whenever INI path changes.
+        self.ini_path.editingFinished.connect(self._update_sandbox_path_display)
+
         # Persist settings changes automatically.
         self.ini_path.editingFinished.connect(self.save_state)
         self.server_dir.editingFinished.connect(self.save_state)
@@ -218,6 +239,29 @@ class SettingsTab(QWidget):
         self.crash_restart_check.toggled.connect(lambda _v: self.save_state())
         self.crash_restart_delay.currentTextChanged.connect(lambda _t: self.save_state())
         self.auto_mod_check.toggled.connect(lambda _v: self.save_state())
+
+    def get_sandbox_vars_path(self, ini_path=None):
+        """Return the expected SandboxVars.lua path derived from the INI file path."""
+        if ini_path is None:
+            ini_path = self.ini_path.text().strip()
+        if not ini_path:
+            return ""
+        base = os.path.splitext(os.path.basename(ini_path))[0]
+        return os.path.join(os.path.dirname(ini_path), f"{base}_SandboxVars.lua")
+
+    def _update_sandbox_path_display(self, ini_path=None):
+        path = self.get_sandbox_vars_path(ini_path)
+        self.sandbox_vars_path.setText(path.replace("\\", "/") if path else "")
+        exists = os.path.isfile(path) if path else False
+        self.edit_sandbox_button.setEnabled(bool(path))
+        self.sandbox_vars_path.setStyleSheet(
+            "color: #999;" if exists else "color: #c77;"
+        )
+
+    def _on_edit_sandbox_clicked(self):
+        path = self.get_sandbox_vars_path()
+        if path:
+            self.sandbox_edit_requested.emit(path)
 
     def load_state(self):
         if self._has_manual_ini_path():
@@ -261,6 +305,7 @@ class SettingsTab(QWidget):
         self._update_toggle_button_text(self.crash_restart_check, "Crash Auto-Restart")
         self._update_toggle_button_text(self.auto_mod_check, "Auto Mod Update Detection")
         self._apply_auto_restart_lock()
+        self._update_sandbox_path_display(self.ini_path.text())
 
     def save_state(self):
         ini_path = self.ini_path.text().strip()
@@ -373,6 +418,7 @@ class SettingsTab(QWidget):
         self.server_dir.setEnabled(not locked)
         self.browse_server_button.setEnabled(not locked)
         self.launch_params.setEnabled(not locked)
+        self.edit_sandbox_button.setEnabled(not locked and bool(self.ini_path.text().strip()))
 
     def browse_ini_file(self):
         initial_dir = os.path.dirname(self.ini_path.text().strip()) or os.path.dirname(self._detect_default_ini_path())
@@ -381,6 +427,7 @@ class SettingsTab(QWidget):
             self.ini_path.setText(file_path)
             self._set_manual_ini_path(True)
             self.save_state()
+            self._update_sandbox_path_display(file_path)
             self.ini_selected.emit(file_path)
 
     def on_ini_path_changed(self):
@@ -388,6 +435,7 @@ class SettingsTab(QWidget):
         if ini_path:
             self._set_manual_ini_path(True)
             self.save_state()
+            self._update_sandbox_path_display(ini_path)
             self.ini_selected.emit(ini_path)
 
     def browse_server_dir(self):

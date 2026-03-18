@@ -1,6 +1,6 @@
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QIcon, QColor, QPalette
 from PySide6.QtWidgets import QApplication, QMessageBox
-from PySide6.QtCore import QLockFile
+from PySide6.QtCore import QLockFile, Qt
 import sys
 import os
 import ctypes
@@ -61,6 +61,24 @@ def _create_single_instance_lock():
         "mutex": mutex_handle,
     }
 
+
+def _apply_dark_fusion_palette(app):
+    palette = QPalette()
+    palette.setColor(QPalette.Window, QColor(24, 24, 24))
+    palette.setColor(QPalette.WindowText, QColor(240, 240, 240))
+    palette.setColor(QPalette.Base, QColor(18, 18, 18))
+    palette.setColor(QPalette.AlternateBase, QColor(28, 28, 28))
+    palette.setColor(QPalette.ToolTipBase, QColor(27, 27, 27))
+    palette.setColor(QPalette.ToolTipText, QColor(240, 240, 240))
+    palette.setColor(QPalette.Text, QColor(240, 240, 240))
+    palette.setColor(QPalette.Button, QColor(36, 39, 43))
+    palette.setColor(QPalette.ButtonText, QColor(240, 240, 240))
+    palette.setColor(QPalette.BrightText, QColor(255, 255, 255))
+    palette.setColor(QPalette.Highlight, QColor(255, 133, 0))
+    palette.setColor(QPalette.HighlightedText, QColor(17, 17, 17))
+    palette.setColor(QPalette.PlaceholderText, QColor(160, 160, 160))
+    app.setPalette(palette)
+
 # -----------------------------
 # Main Application
 # -----------------------------
@@ -77,14 +95,13 @@ def main():
     if os.path.isfile(app_icon_path):
         app.setWindowIcon(QIcon(app_icon_path))
     app.setStyle("Fusion")
+    _apply_dark_fusion_palette(app)
     app.setStyleSheet("""
         QWidget {
             background-color: #181818;
             color: #f0f0f0;
             font-family: Corbel;
             font-size: 10.5pt;
-            selection-background-color: #ff8500;
-            selection-color: #ffffff;
         }
 
         QMainWindow, QDialog {
@@ -197,12 +214,36 @@ def main():
             border: 1px solid #ff8500;
         }
 
-        QComboBox, QSpinBox {
+        QComboBox, QSpinBox, QDoubleSpinBox {
             background-color: #121212;
             color: #f0f0f0;
             border: 1px solid #2a2a2a;
             border-radius: 4px;
             padding: 4px;
+        }
+
+        QComboBox QAbstractItemView {
+            background-color: #121212;
+            color: #f0f0f0;
+            border: 1px solid #2a2a2a;
+            outline: 0;
+            selection-background-color: #ff8500;
+            selection-color: #111111;
+        }
+
+        QComboBox QAbstractItemView::item {
+            padding: 4px 6px;
+            min-height: 22px;
+        }
+
+        QComboBox QAbstractItemView::item:hover {
+            background-color: #2e2112;
+            color: #ff9d44;
+        }
+
+        QComboBox QAbstractItemView::item:selected {
+            background-color: #ff8500;
+            color: #111111;
         }
 
         QToolTip {
@@ -227,39 +268,6 @@ def main():
             color: #cccccc;
         }
 
-        QCheckBox {
-            color: #f0f0f0;
-            spacing: 8px;
-            background: transparent;
-            padding: 0;
-            margin: 0;
-        }
-
-        QCheckBox::indicator {
-            width: 16px;
-            height: 16px;
-            border-radius: 3px;
-            border: 1px solid #6c6c6c;
-            background: #121212;
-            margin: 0;
-            padding: 0;
-        }
-
-        QCheckBox::indicator:checked {
-            background: #ff8500;
-            border: 2px solid #ffb066;
-        }
-
-        QCheckBox::indicator:unchecked:hover,
-        QCheckBox::indicator:checked:hover {
-            border-color: #ffc27f;
-        }
-
-        QCheckBox::indicator:disabled {
-            background: #1a1c1f;
-            border-color: #353535;
-        }
-
         QLabel {
             color: #f0f0f0;
         }
@@ -281,9 +289,11 @@ def main():
         }
 
         QTabBar::tab:selected {
-            background-color: #0f0f10;
-            color: #ffffff;
-            border-color: #ff8500;
+            background-color: #1e2228;
+            color: #ff9d44;
+            border: 1px solid #2a2a2a;
+            border-bottom: none;
+            border-top: 2px solid #ff8500;
         }
 
         QTabBar::tab:hover:!selected {

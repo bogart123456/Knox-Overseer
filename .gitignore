@@ -28,9 +28,18 @@ desktop.ini
 # Build and packaging artifacts
 build/
 dist/
+/release/
 *.egg-info/
 .eggs/
 pip-wheel-metadata/
+
+# PyInstaller generated artifacts
+*.manifest
+*.pkg
+*.pyz
+*.toc
+warn-*.txt
+xref-*.html
 
 # PyInstaller
 *.spec.bak
@@ -38,7 +47,11 @@ pip-wheel-metadata/
 # Logs and runtime output
 logs/*.log
 logs/*.txt
+logs/*
+!logs/.gitkeep
 *.log
+*.pid
+*.tmp
 
 # Local runtime/data artifacts
 data/backups/*
@@ -52,3 +65,12 @@ data/backups/*
 # Project-specific temp/debug files
 stats_cache.json
 players_cache.json
+
+# Backup/edited file artifacts
+*.bak
+
+# Private/internal release workflow files
+RELEASE_CHECKLIST.md
+scripts/pre_release_check.ps1
+docs-private/
+.internal/

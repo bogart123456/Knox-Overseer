@@ -1,3 +1,6 @@
+import os
+from types import SimpleNamespace
+
 from PySide6.QtWidgets import QPushButton
 from app.ui.main_window import MainWindow
 
@@ -53,3 +56,71 @@ def test_crash_countdown_can_be_cancelled(qapp, monkeypatch):
     assert win._crash_recovery_pending is False
     assert win._crash_recovery_remaining == 0
     assert any("cancelled" in e.lower() for e in events)
+
+
+def test_on_ini_selected_same_path_keeps_loaded_markers(monkeypatch):
+    win = MainWindow.__new__(MainWindow)
+    same_path = os.path.normpath("C:/Server/servertest.ini")
+    win._active_ini_path = same_path
+    win._loaded_for_ini = {
+        "mods": same_path,
+        "logs": same_path,
+        "ini": same_path,
+        "sandbox": same_path,
+    }
+
+    win._update_server_name_label = lambda _p: None
+    win.stats_tab = SimpleNamespace(set_ini_path=lambda _p: None)
+    win.backup_tab = SimpleNamespace(set_ini_path=lambda _p: None)
+    win.tab_widget = SimpleNamespace(currentWidget=lambda: None)
+
+    MainWindow._on_ini_selected(win, same_path, load_visible_tab=False)
+
+    assert win._loaded_for_ini["mods"] == same_path
+    assert win._loaded_for_ini["logs"] == same_path
+    assert win._loaded_for_ini["ini"] == same_path
+    assert win._loaded_for_ini["sandbox"] == same_path
+
+
+def test_on_ini_selected_new_path_invalidates_loaded_markers(monkeypatch):
+    win = MainWindow.__new__(MainWindow)
+    old_path = os.path.normpath("C:/Server/servertest.ini")
+    new_path = os.path.normpath("C:/Server/new_server.ini")
+    win._active_ini_path = old_path
+    win._loaded_for_ini = {
+        "mods": old_path,
+        "logs": old_path,
+        "ini": old_path,
+        "sandbox": old_path,
+    }
+
+    win._update_server_name_label = lambda _p: None
+    win.stats_tab = SimpleNamespace(set_ini_path=lambda _p: None)
+    win.backup_tab = SimpleNamespace(set_ini_path=lambda _p: None)
+    win.tab_widget = SimpleNamespace(currentWidget=lambda: None)
+
+    MainWindow._on_ini_selected(win, new_path, load_visible_tab=False)
+
+    assert win._active_ini_path == new_path
+    assert win._loaded_for_ini["mods"] is None
+    assert win._loaded_for_ini["logs"] is None
+    assert win._loaded_for_ini["ini"] is None
+    assert win._loaded_for_ini["sandbox"] is None
+
+
+def test_load_mods_if_needed_skips_when_cached():
+    win = MainWindow.__new__(MainWindow)
+    ini_path = os.path.normpath("C:/Server/servertest.ini")
+    call_count = {"count": 0}
+
+    win._active_ini_path = ini_path
+    win._loaded_for_ini = {"mods": ini_path}
+    win.mods_tab = SimpleNamespace(load_mods=lambda _p: call_count.__setitem__("count", call_count["count"] + 1))
+
+    MainWindow._load_mods_if_needed(win)
+    assert call_count["count"] == 0
+
+    win._loaded_for_ini["mods"] = None
+    MainWindow._load_mods_if_needed(win)
+    assert call_count["count"] == 1
+    assert win._loaded_for_ini["mods"] == ini_path
