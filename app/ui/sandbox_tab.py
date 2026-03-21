@@ -377,6 +377,13 @@ class SandboxVarsTab(QWidget):
             return
         self._current_path = normalized
         self._path_label.setText(path or "No file loaded")
+        # A new file should start unfiltered to avoid carrying stale search
+        # results that can hide every row and look like a render failure.
+        self._search_timer.stop()
+        self._search_box.clear()
+        self._pending_search_query = ""
+        self._last_applied_search_query = None
+        self._pre_search_section_state = {}
         # Clear the existing form so the next load() does a full rebuild
         self._field_widgets = {}
         self._changed_fields = set()
@@ -685,6 +692,7 @@ class SandboxVarsTab(QWidget):
         vbox = QVBoxLayout(content)
         vbox.setContentsMargins(12, 12, 12, 12)
         vbox.setSpacing(14)
+        self._field_widgets = {}
         self._section_widgets = {}
 
         for section in sections:
