@@ -1212,19 +1212,33 @@ class MainWindow(QMainWindow):
         if not server_dir:
             self.output_signal.emit("No server directory selected.")
             return
-        java_exe_path = os.path.normpath(os.path.join(server_dir, "jre64", "bin", "java.exe"))
-        if not os.path.exists(java_exe_path):
-            self.output_signal.emit(f"Java executable not found at: {java_exe_path}")
-            return
+
+        java_candidates = [
+            os.path.normpath(os.path.join(server_dir, "jre64", "bin", "java.exe")),
+            os.path.normpath(os.path.join(server_dir, "jre64", "bin", "java")),
+            os.path.normpath(os.path.join(server_dir, "jre", "bin", "java")),
+        ]
+        if sys.platform == "win32":
+            java_candidates.append(os.path.normpath(os.path.join(server_dir, "jre", "bin", "java.exe")))
+
+        java_exe = next((candidate for candidate in java_candidates if os.path.exists(candidate)), None)
+        if not java_exe:
+            system_java = shutil.which("java")
+            if system_java:
+                java_exe = system_java
+                self.output_signal.emit(f"Using system Java: {system_java}")
+            else:
+                self.output_signal.emit("Java executable not found in server directory or PATH.")
+                return
+
         jar_path = os.path.normpath(os.path.join(server_dir, "java", "projectzomboid.jar"))
         if not os.path.exists(jar_path):
             self.output_signal.emit(f"JAR file not found at: {jar_path}")
             self.output_signal.emit("Check that your selected server folder matches the installed Project Zomboid Dedicated Server version.")
             return
         # Construct command as list
-        java_exe = os.path.join(server_dir, "jre64", "bin", "java.exe")
         try:
-            parsed_params = shlex.split(params, posix=False)
+            parsed_params = shlex.split(params, posix=(sys.platform != "win32"))
         except ValueError as e:
             self.output_signal.emit(f"Invalid Java arguments: {e}")
             return

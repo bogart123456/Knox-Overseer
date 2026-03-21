@@ -29,6 +29,31 @@ class SettingsTab(QWidget):
         # Keep default relative so packaged executable works when placed in server folder.
         return "."
 
+    def _default_launch_params(self):
+        common = (
+            "--enable-native-access=ALL-UNNAMED "
+            "-Djava.awt.headless=true "
+            "-Dzomboid.steam=1 "
+            "-Dzomboid.znetlog=1 "
+            "-XX:+UseZGC "
+            "-XX:-CreateCoredumpOnCrash "
+            "-XX:-OmitStackTraceInFastThrow "
+            "-Xms8g -Xmx8g "
+        )
+        if sys.platform == "win32":
+            return (
+                f"{common}"
+                "-Djava.library.path=natives/;natives/win64/;. "
+                "-cp java/;java/projectzomboid.jar "
+                "zombie.network.GameServer -statistic 0"
+            )
+        return (
+            f"{common}"
+            "-Djava.library.path=natives/:natives/linux64/:. "
+            "-cp java/:java/projectzomboid.jar "
+            "zombie.network.GameServer -statistic 0"
+        )
+
     def _runtime_base_dir(self):
         if getattr(sys, "frozen", False):
             return os.path.dirname(os.path.abspath(sys.executable))
@@ -114,7 +139,7 @@ class SettingsTab(QWidget):
         launch_label = QLabel("Java Arguments:")
         launch_label.setFixedWidth(label_width)
         launch_layout.addWidget(launch_label)
-        self.launch_params = QLineEdit("--enable-native-access=ALL-UNNAMED -Djava.awt.headless=true -Dzomboid.steam=1 -Dzomboid.znetlog=1 -XX:+UseZGC -XX:-CreateCoredumpOnCrash -XX:-OmitStackTraceInFastThrow -Xms8g -Xmx8g -Djava.library.path=natives/;natives/win64/;. -cp java/;java/projectzomboid.jar zombie.network.GameServer -statistic 0")
+        self.launch_params = QLineEdit(self._default_launch_params())
         launch_layout.addWidget(self.launch_params)
         launch_layout.addSpacing(button_width)
         layout.addLayout(launch_layout)
