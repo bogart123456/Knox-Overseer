@@ -14,6 +14,7 @@ import socket
 import struct
 import tempfile
 import time
+import traceback
 import zipfile
 import configparser
 import urllib.parse
@@ -286,7 +287,10 @@ class MainWindow(QMainWindow):
         try:
             task()
         except Exception as exc:
-            self.output_signal.emit(f"[Startup] Deferred task failed: {exc}")
+            self.output_signal.emit(
+                f"[Startup] Deferred task failed during '{message}': {type(exc).__name__}: {exc!r}"
+            )
+            self.output_signal.emit(traceback.format_exc().rstrip())
         QTimer.singleShot(0, self._run_next_startup_task)
 
     def _on_ini_selected(self, ini_path, load_visible_tab=True):

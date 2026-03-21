@@ -1,5 +1,6 @@
 from PySide6.QtWidgets import QLineEdit, QTableWidgetItem
 from app.ui.mods_tab import ModsTab
+from app.ui.mods_tab import MANDATORY_MOD_ID, MANDATORY_WORKSHOP_ID
 
 
 class _SettingsStub:
@@ -98,3 +99,37 @@ def test_refresh_mods_can_target_specific_workshop_ids(qapp):
 
     tab.refresh_mods(workshop_ids={"222"})
     assert calls == ["222"]
+
+
+def test_save_config_does_not_force_knoxoverseer_on_linux(qapp, tmp_path, monkeypatch):
+    tab = ModsTab(_SettingsStub())
+    ini_path = tmp_path / "server.ini"
+    ini_path.write_text("WorkshopItems=\nMods=\n", encoding="utf-8")
+    tab.settings_tab.ini_path.setText(str(ini_path))
+
+    monkeypatch.setattr("app.ui.mods_tab.sys.platform", "linux")
+
+    tab._add_mod_row("LocalOnly", "LocalOnly", "", "Local", {}, True)
+    ok = tab.save_config_silent()
+    assert ok is True
+
+    content = ini_path.read_text(encoding="utf-8")
+    assert MANDATORY_MOD_ID not in content
+    assert MANDATORY_WORKSHOP_ID not in content
+
+
+def test_save_config_forces_knoxoverseer_on_non_linux(qapp, tmp_path, monkeypatch):
+    tab = ModsTab(_SettingsStub())
+    ini_path = tmp_path / "server.ini"
+    ini_path.write_text("WorkshopItems=\nMods=\n", encoding="utf-8")
+    tab.settings_tab.ini_path.setText(str(ini_path))
+
+    monkeypatch.setattr("app.ui.mods_tab.sys.platform", "win32")
+
+    tab._add_mod_row("LocalOnly", "LocalOnly", "", "Local", {}, True)
+    ok = tab.save_config_silent()
+    assert ok is True
+
+    content = ini_path.read_text(encoding="utf-8")
+    assert MANDATORY_MOD_ID in content
+    assert MANDATORY_WORKSHOP_ID in content

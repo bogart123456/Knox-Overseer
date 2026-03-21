@@ -877,14 +877,29 @@ class SandboxVarsTab(QWidget):
         """Configure numeric spinbox with min/max constraints from comments."""
         min_v, max_v = _extract_min_max(comments)
         if is_int:
-            widget.setMinimum(int(min_v) if min_v is not None else -2_147_483_647)
-            widget.setMaximum(
-                int(min(max_v, 2_147_483_647)) if max_v is not None else 2_147_483_647
-            )
+            qt_int_min = -2_147_483_648
+            qt_int_max = 2_147_483_647
+
+            min_bound = int(min_v) if min_v is not None else qt_int_min
+            max_bound = int(max_v) if max_v is not None else qt_int_max
+            min_bound = max(qt_int_min, min(min_bound, qt_int_max))
+            max_bound = max(qt_int_min, min(max_bound, qt_int_max))
+            if min_bound > max_bound:
+                min_bound, max_bound = max_bound, min_bound
+
+            widget.setMinimum(min_bound)
+            widget.setMaximum(max_bound)
+
+            safe_value = int(value)
+            safe_value = max(min_bound, min(safe_value, max_bound))
+            widget.setValue(safe_value)
+            return
         else:
             widget.setMinimum(min_v if min_v is not None else -1_000_000.0)
             widget.setMaximum(min(max_v, 1_000_000.0) if max_v is not None else 1_000_000.0)
-        widget.setValue(value)
+            safe_value = float(value)
+            safe_value = max(widget.minimum(), min(safe_value, widget.maximum()))
+            widget.setValue(safe_value)
 
     # ── Private: value serialisation back to Lua ──────────────────────
 

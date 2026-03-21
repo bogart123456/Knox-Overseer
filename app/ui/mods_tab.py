@@ -3,6 +3,7 @@ from PySide6.QtCore import Qt, Signal
 from datetime import datetime
 import requests
 import re
+import sys
 from .widgets import CheckMarkBox
 
 MANDATORY_WORKSHOP_ID = "3686757561"
@@ -84,6 +85,10 @@ class ModsTab(QWidget):
         self.remove_mod_button.setEnabled(enabled)
         self.move_up_button.setEnabled(enabled)
         self.move_down_button.setEnabled(enabled)
+
+    def _is_mandatory_mod_enforced(self):
+        # Linux servers should be able to disable KnoxOverseer while troubleshooting.
+        return not sys.platform.startswith("linux")
 
     def load_mods(self, ini_path=None):
         if ini_path:
@@ -191,7 +196,8 @@ class ModsTab(QWidget):
                 QMessageBox.warning(self, "Error", "No INI file selected in Settings.")
             return False, "No INI file selected in Settings."
         try:
-            self._ensure_mandatory_mod_present()
+            if self._is_mandatory_mod_enforced():
+                self._ensure_mandatory_mod_present()
             with open(ini_path, 'r', encoding='utf-8') as f:
                 content = f.read()
             lines = content.splitlines()
@@ -216,10 +222,11 @@ class ModsTab(QWidget):
                         if mod_id:
                             mod_ids.append(mod_id)
 
-            if MANDATORY_WORKSHOP_ID not in workshop_ids:
-                workshop_ids.append(MANDATORY_WORKSHOP_ID)
-            if MANDATORY_MOD_ID not in mod_ids:
-                mod_ids.append(MANDATORY_MOD_ID)
+            if self._is_mandatory_mod_enforced():
+                if MANDATORY_WORKSHOP_ID not in workshop_ids:
+                    workshop_ids.append(MANDATORY_WORKSHOP_ID)
+                if MANDATORY_MOD_ID not in mod_ids:
+                    mod_ids.append(MANDATORY_MOD_ID)
 
             # Update or add lines
             workshop_line = f"WorkshopItems={';'.join(workshop_ids)}"
@@ -290,6 +297,9 @@ class ModsTab(QWidget):
         }
 
     def _ensure_mandatory_mod_present(self):
+        if not self._is_mandatory_mod_enforced():
+            return
+
         for row in range(self.mods_table.rowCount()):
             if self._is_mandatory_row(row):
                 if row < len(self.enabled_checkboxes):
@@ -478,7 +488,7 @@ class ModsTab(QWidget):
     def remove_mod(self):
         current_row = self.mods_table.currentRow()
         if current_row >= 0:
-            if self._is_mandatory_row(current_row):
+            if self._is_mandatory_mod_enforced() and self._is_mandatory_row(current_row):
                 QMessageBox.warning(self, "Required Mod", "KnoxOverseer is required and cannot be removed.")
                 return
             self.mods_table.removeRow(current_row)
@@ -490,7 +500,7 @@ class ModsTab(QWidget):
     def move_up(self):
         current_row = self.mods_table.currentRow()
         if current_row > 0:
-            if self._is_mandatory_row(current_row) or self._is_mandatory_row(current_row - 1):
+            if self._is_mandatory_mod_enforced() and (self._is_mandatory_row(current_row) or self._is_mandatory_row(current_row - 1)):
                 return
             # Swap with previous row
             for col in range(self.mods_table.columnCount() - 1):
@@ -514,7 +524,7 @@ class ModsTab(QWidget):
     def move_down(self):
         current_row = self.mods_table.currentRow()
         if current_row < self.mods_table.rowCount() - 1 and current_row >= 0:
-            if self._is_mandatory_row(current_row) or self._is_mandatory_row(current_row + 1):
+            if self._is_mandatory_mod_enforced() and (self._is_mandatory_row(current_row) or self._is_mandatory_row(current_row + 1)):
                 return
             # Swap with next row
             for col in range(self.mods_table.columnCount() - 1):
