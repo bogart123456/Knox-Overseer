@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import sys
 from datetime import datetime
 from PySide6.QtGui import QKeySequence
 from PySide6.QtCore import QFileSystemWatcher, QTimer, Qt
@@ -141,6 +142,13 @@ class StatsTab(QWidget):
         self._appear_timer = QTimer()
         self._appear_timer.timeout.connect(self._poll_until_file_appears)
         self._appear_timer.start(3000)
+
+        # Fallback: poll for stats updates even if file watcher misses notifications.
+        # On Linux, QFileSystemWatcher can be unreliable with atomic file writes.
+        self._refresh_timer = QTimer()
+        self._refresh_timer.timeout.connect(self.refresh_stats)
+        if sys.platform == "linux":
+            self._refresh_timer.start(1000)  # Poll every 1 second on Linux only
 
     def set_real_uptime_seconds(self, seconds):
         if seconds is None:

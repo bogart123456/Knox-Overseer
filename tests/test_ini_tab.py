@@ -1,4 +1,6 @@
 from app.ui.ini_tab import parse_ini
+from app.ui.ini_tab import IniTab
+from PySide6.QtWidgets import QLabel
 
 
 def test_parse_ini_preserves_general_and_sections():
@@ -34,3 +36,32 @@ ValidKey = 42
     sections, _ = parse_ini(raw)
 
     assert [field["key"] for field in sections[0]["fields"]] == ["ValidKey"]
+
+
+def test_ini_tab_load_rebuilds_when_placeholder_is_showing(tmp_path, qapp):
+    ini_path = tmp_path / "servertest.ini"
+    ini_path.write_text("Public=true\nPort=16261\n", encoding="utf-8")
+
+    tab = IniTab()
+
+    # Simulate stale state where cache exists but the scroll area still points
+    # to the initial placeholder label.
+    tab._field_widgets = {
+        ("General", "Stale"): {
+            "key": "Stale",
+            "widget": None,
+            "wtype": "raw",
+            "line_idx": 0,
+            "original_value": "x",
+            "editable": True,
+            "row": None,
+            "section": "General",
+            "search_text": "",
+        }
+    }
+
+    tab._current_path = str(ini_path)
+    tab.load()
+
+    assert not isinstance(tab._scroll.widget(), QLabel)
+    assert len(tab._field_widgets) == 2

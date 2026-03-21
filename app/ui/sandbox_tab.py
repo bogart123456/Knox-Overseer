@@ -451,9 +451,17 @@ class SandboxVarsTab(QWidget):
         # Sandbox schemas can grow when mods add new settings, so rebuild the
         # form when the discovered field count changes.
         should_rebuild = False
+        total = sum(len(s["fields"]) for s in sections)
+        showing_placeholder = isinstance(self._scroll.widget(), QLabel)
+
+        # If parsing produced data but the scroll area still has its startup
+        # placeholder mounted, force a full rebuild so rows are rendered.
+        if total > 0 and showing_placeholder:
+            should_rebuild = True
+
         if self._field_widgets and self._schema_can_change_externally():
             total_existing = len(self._field_widgets)
-            total_new = sum(len(s["fields"]) for s in sections)
+            total_new = total
             if total_new != total_existing:
                 should_rebuild = True
 
@@ -465,7 +473,6 @@ class SandboxVarsTab(QWidget):
             self._changed_fields = set()
             self._build_form(sections)
 
-        total = sum(len(s["fields"]) for s in sections)
         self._reload_btn.setEnabled(True)
         self._refresh_save_button()
         self._set_status(

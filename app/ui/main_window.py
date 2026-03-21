@@ -1159,6 +1159,127 @@ class MainWindow(QMainWindow):
         inner = struct.pack('<ii', packet_id, packet_type) + body
         return struct.pack('<i', len(inner)) + inner
 
+    def _normalize_path_list_for_server_dir(self, path_list, server_dir):
+        """Resolve relative JVM path-list entries against the selected server directory."""
+        if not path_list:
+            return path_list
+
+        # Respect the separator style already present in the user-provided value.
+        if ';' in path_list and ':' not in path_list:
+            separator = ';'
+        elif ':' in path_list and ';' not in path_list:
+            separator = ':'
+        else:
+            separator = ';' if sys.platform == "win32" else ':'
+
+        resolved = []
+        changed = False
+        for part in path_list.split(separator):
+            token = part.strip()
+            if not token:
+                continue
+
+            if token == '.':
+                resolved.append(server_dir)
+                changed = True
+                continue
+
+            if os.path.isabs(token):
+                resolved.append(os.path.normpath(token))
+                continue
+
+            resolved.append(os.path.normpath(os.path.join(server_dir, token)))
+            changed = True
+
+        normalized = separator.join(resolved)
+        return normalized if changed else path_list
+
+    def _normalize_java_params_for_server_dir(self, parsed_params, server_dir):
+        """Normalize selected JVM arguments so native and classpath entries are CWD-safe."""
+        normalized = list(parsed_params)
+        i = 0
+        while i < len(normalized):
+            arg = normalized[i]
+
+            if arg.startswith("-Djava.library.path="):
+                raw_value = arg.split("=", 1)[1]
+                fixed_value = self._normalize_path_list_for_server_dir(raw_value, server_dir)
+                normalized[i] = f"-Djava.library.path={fixed_value}"
+
+            elif arg in ("-cp", "-classpath") and i + 1 < len(normalized):
+                normalized[i + 1] = self._normalize_path_list_for_server_dir(normalized[i + 1], server_dir)
+                i += 1
+
+            elif arg.startswith("-cp="):
+                raw_value = arg.split("=", 1)[1]
+                fixed_value = self._normalize_path_list_for_server_dir(raw_value, server_dir)
+                normalized[i] = f"-cp={fixed_value}"
+
+            elif arg.startswith("-classpath="):
+                raw_value = arg.split("=", 1)[1]
+                fixed_value = self._normalize_path_list_for_server_dir(raw_value, server_dir)
+                normalized[i] = f"-classpath={fixed_value}"
+
+            i += 1
+
+        return normalized
+
+    def _ensure_steam_symlink_on_linux(self):
+        """On Linux, auto-create symlink for Steam if source exists and target missing."""
+        if sys.platform != "linux":
+            return
+
+        home = os.path.expanduser("~")
+        source = "/opt/pzserver/linux64/steamclient.so"
+        target_dir = os.path.join(home, ".steam", "sdk64")
+        target = os.path.join(target_dir, "steamclient.so")
+
+        # Only proceed if source exists and target doesn't.
+        if not os.path.isfile(source):
+            return
+        if os.path.isfile(target) or os.path.islink(target):
+            return
+
+        try:
+            os.makedirs(target_dir, exist_ok=True)
+            os.symlink(source, target)
+            self.output_signal.emit(f"[Steam] Created symlink: {target} → {source}")
+        except Exception as exc:
+            self.output_signal.emit(f"[Steam] Warning: Could not auto-create symlink: {exc}")
+
+    def _build_server_launch_env(self, server_dir):
+        """Return process environment with Linux native library paths primed for Steam."""
+        env = os.environ.copy()
+
+        if sys.platform != "linux":
+            return env
+
+        home = os.path.expanduser("~")
+        candidate_paths = [
+            os.path.join(server_dir, "linux64"),
+            os.path.join(server_dir, "natives", "linux64"),
+            os.path.join(server_dir, "natives"),
+            "/opt/pzserver/linux64",
+            os.path.join(home, ".steam", "sdk64"),
+            os.path.join(home, ".steam", "steamcmd", "linux64"),
+            os.path.join(home, "Steam", "steamcmd", "linux64"),
+            os.path.join(home, ".local", "share", "Steam", "linux64"),
+            os.path.join(home, ".steam", "debian-installation", "linux64"),
+        ]
+
+        existing = [p for p in env.get("LD_LIBRARY_PATH", "").split(":") if p]
+        merged = []
+        seen = set()
+        for path in candidate_paths + existing:
+            norm = os.path.normpath(path)
+            if norm in seen:
+                continue
+            seen.add(norm)
+            merged.append(norm)
+
+        env["LD_LIBRARY_PATH"] = ":".join(merged)
+        return env
+
     def rcon_execute(self, host, port, password, command):
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(10)
@@ -1248,10 +1369,18 @@ class MainWindow(QMainWindow):
             parsed_params.insert(0, native_access_flag)
             self.output_signal.emit("Added missing JVM flag: --enable-native-access=ALL-UNNAMED")
 
+        parsed_params = self._normalize_java_params_for_server_dir(parsed_params, server_dir)
+
+        # Ensure Steam symlink exists on Linux before launch.
+        self._ensure_steam_symlink_on_linux()
+
         command_list = [java_exe] + parsed_params
         full_command_str = ' '.join(command_list)  # For logging
         self.output_signal.emit(f"Command: {full_command_str}")
         self.output_signal.emit(f"CWD: {server_dir}")
+        launch_env = self._build_server_launch_env(server_dir)
+        if sys.platform == "linux":
+            self.output_signal.emit(f"LD_LIBRARY_PATH: {launch_env.get('LD_LIBRARY_PATH', '')}")
 
         if not self._acquire_server_lock():
             self.output_signal.emit("Another Knox Overseer instance already controls the server. Start blocked to prevent duplicate instances.")
@@ -1269,6 +1398,7 @@ class MainWindow(QMainWindow):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 stdin=subprocess.PIPE,
+                env=launch_env,
                 text=True,
                 bufsize=1,
                 creationflags=creationflags,

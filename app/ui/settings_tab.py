@@ -45,13 +45,13 @@ class SettingsTab(QWidget):
                 f"{common}"
                 "-Djava.library.path=natives/;natives/win64/;. "
                 "-cp java/;java/projectzomboid.jar "
-                "zombie.network.GameServer -statistic 0"
+                "zombie.network.GameServer"
             )
         return (
             f"{common}"
             "-Djava.library.path=natives/:natives/linux64/:. "
             "-cp java/:java/projectzomboid.jar "
-            "zombie.network.GameServer -statistic 0"
+            "zombie.network.GameServer"
         )
 
     def _runtime_base_dir(self):
