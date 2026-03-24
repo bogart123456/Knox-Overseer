@@ -26,12 +26,14 @@ class SettingsTab(QWidget):
         self._settings.setValue("settings/ini_path_manual", bool(value))
 
     def _default_server_dir_text(self):
+        if sys.platform.startswith("linux"):
+            # PZ wiki steamcmd examples use /opt/pzserver as the install root.
+            return "/opt/pzserver"
         # Keep default relative so packaged executable works when placed in server folder.
         return "."
 
     def _default_launch_params(self):
         common = (
-            "--enable-native-access=ALL-UNNAMED "
             "-Djava.awt.headless=true "
             "-Dzomboid.steam=1 "
             "-Dzomboid.znetlog=1 "
@@ -47,10 +49,19 @@ class SettingsTab(QWidget):
                 "-cp java/;java/projectzomboid.jar "
                 "zombie.network.GameServer"
             )
+        linux_common = (
+            "-Djava.awt.headless=true "
+            "-Xmx6g "
+            "-Dzomboid.steam=1 "
+            "-Dzomboid.znetlog=1 "
+            "-Djava.library.path=linux64/:natives/ "
+            "-Djava.security.egd=file:/dev/urandom "
+            "-XX:+UseZGC "
+            "-XX:-OmitStackTraceInFastThrow "
+        )
         return (
-            f"{common}"
-            "-Djava.library.path=natives/:natives/linux64/:. "
-            "-cp java/:java/projectzomboid.jar "
+            f"{linux_common}"
+            "-cp java/.:java/projectzomboid.jar "
             "zombie.network.GameServer"
         )
 

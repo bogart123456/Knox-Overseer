@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel, QTextEdit, QPushButton, QTableWidget, QTableWidgetItem, QInputDialog, QMessageBox, QHeaderView, QAbstractItemView
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel, QTextEdit, QPushButton, QTableWidget, QTableWidgetItem, QInputDialog, QMessageBox, QHeaderView, QAbstractItemView, QLineEdit
 from PySide6.QtCore import Qt, Signal
 from datetime import datetime
 import requests
@@ -23,6 +23,14 @@ class ModsTab(QWidget):
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
+
+        # Search/filter controls
+        search_layout = QHBoxLayout()
+        search_label = QLabel("Search:")
+        search_layout.addWidget(search_label)
+        self.search_input = self._build_search_input()
+        search_layout.addWidget(self.search_input)
+        layout.addLayout(search_layout)
 
         # Main layout with table and info box
         main_layout = QHBoxLayout()
@@ -79,6 +87,43 @@ class ModsTab(QWidget):
         layout.addLayout(buttons_layout)
 
         self.mods_table.itemSelectionChanged.connect(self.update_selected_mod_info)
+
+    def _build_search_input(self):
+        search_input = QLineEdit()
+        search_input.setPlaceholderText("Filter by name, mod ID, or workshop ID")
+        search_input.textChanged.connect(self._apply_search_filter)
+        return search_input
+
+    def _row_matches_search(self, row, query):
+        if not query:
+            return True
+
+        query = query.lower()
+        for col in (0, 1, 2):
+            item = self.mods_table.item(row, col)
+            if item and query in item.text().lower():
+                return True
+        return False
+
+    def _select_first_visible_row(self):
+        for row in range(self.mods_table.rowCount()):
+            if not self.mods_table.isRowHidden(row):
+                self.mods_table.setCurrentCell(row, 0)
+                return
+        self.mods_table.clearSelection()
+        self.mod_title_label.setText("Title:")
+        self.mod_updated_label.setText("Last Updated:")
+        self.mod_author_label.setText("Author:")
+        self.mod_description.clear()
+
+    def _apply_search_filter(self, query):
+        query = (query or "").strip()
+        current_row = self.mods_table.currentRow()
+        for row in range(self.mods_table.rowCount()):
+            self.mods_table.setRowHidden(row, not self._row_matches_search(row, query))
+
+        if current_row < 0 or self.mods_table.isRowHidden(current_row):
+            self._select_first_visible_row()
 
     def set_mod_actions_enabled(self, enabled):
         self.add_mod_button.setEnabled(enabled)
@@ -371,6 +416,7 @@ class ModsTab(QWidget):
             )
 
         self._ensure_mandatory_mod_present()
+        self._apply_search_filter(self.search_input.text())
 
     def add_mod(self):
         workshop_id, ok = QInputDialog.getText(self, "Add Mod", "Enter Workshop ID:")
@@ -395,6 +441,7 @@ class ModsTab(QWidget):
                 self.mods_table.setCellWidget(row_count, 4, container)
                 self.enabled_checkboxes.append(checkbox)
             self._ensure_mandatory_mod_present()
+            self._apply_search_filter(self.search_input.text())
             # Update workshop info box with the last added mod data
             self.update_workshop_info(mod_data)
 
@@ -496,6 +543,7 @@ class ModsTab(QWidget):
                 del self.mod_data_list[current_row]
             if current_row < len(self.enabled_checkboxes):
                 del self.enabled_checkboxes[current_row]
+            self._apply_search_filter(self.search_input.text())
 
     def move_up(self):
         current_row = self.mods_table.currentRow()

@@ -42,6 +42,7 @@ class MainWindow(QMainWindow):
         self._ui_settings = get_app_settings()
         self.server_process = None
         self._server_started_at = None
+        self._session_started_at = None
         self._last_restart_at = None
         self._current_log_path = None
         self._restart_schedule = None
@@ -1408,6 +1409,10 @@ class MainWindow(QMainWindow):
                 creationflags=creationflags,
             )
             self.output_signal.emit("Server process started.")
+            if self._session_started_at is None:
+                # Session uptime starts on the first explicit Start and is preserved
+                # across auto/mod/crash restarts until an intentional Stop.
+                self._session_started_at = datetime.now()
             self._update_rcon_state()
             self._stop_requested_by_user = False
             self._crash_recovery_pending = False
@@ -1502,6 +1507,8 @@ class MainWindow(QMainWindow):
                 return
 
             self._stop_requested_by_user = True
+            # Only explicit user Stop resets total session uptime.
+            self._session_started_at = None
             # Cancel any queued/ongoing restart pipeline for explicit user stop.
             self._pending_restart = False
             self._restart_requested = False
@@ -1729,13 +1736,30 @@ class MainWindow(QMainWindow):
             self.stats_tab.set_real_uptime_seconds(None)
             self.label_status.setText("Status: Startup Timeout (Running)")
         elif self._is_server_active() and self._server_ready and self._server_started_at is not None:
-            elapsed = datetime.now() - self._server_started_at
-            total_seconds = int(elapsed.total_seconds())
-            hours = total_seconds // 3600
-            minutes = (total_seconds % 3600) // 60
-            seconds = total_seconds % 60
-            self.label_uptime.setText(f"Uptime: {hours:02d}:{minutes:02d}:{seconds:02d}")
-            self.stats_tab.set_real_uptime_seconds(total_seconds)
+            now = datetime.now()
+
+            iteration_elapsed = now - self._server_started_at
+            iteration_seconds = int(iteration_elapsed.total_seconds())
+
+            if self._session_started_at is None:
+                self._session_started_at = self._server_started_at
+            total_elapsed = now - self._session_started_at
+            total_seconds = int(total_elapsed.total_seconds())
+
+            total_h = total_seconds // 3600
+            total_m = (total_seconds % 3600) // 60
+            total_s = total_seconds % 60
+
+            iter_h = iteration_seconds // 3600
+            iter_m = (iteration_seconds % 3600) // 60
+            iter_s = iteration_seconds % 60
+
+            self.label_uptime.setText(
+                f"Uptime: {total_h:02d}:{total_m:02d}:{total_s:02d} "
+                f"({iter_h:02d}:{iter_m:02d}:{iter_s:02d})"
+            )
+            # Keep Stats tab tied to current iteration runtime.
+            self.stats_tab.set_real_uptime_seconds(iteration_seconds)
             self.label_status.setText("Status: Running")
         elif self._is_server_active() and self._server_starting:
             self.label_uptime.setText("Uptime: -")
