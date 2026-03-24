@@ -36,6 +36,7 @@ class MainWindow(QMainWindow):
     mod_updates_detected = Signal(object)
     backup_status_signal = Signal(str)
     discord_send_status_signal = Signal(str)
+    discord_message_id_signal = Signal(str)
 
     def __init__(self):
         super().__init__()
@@ -227,6 +228,7 @@ class MainWindow(QMainWindow):
         self.discord_tab.send_webhook_requested.connect(self._send_discord_webhook)
         self.discord_tab.repeat_settings_changed.connect(self._update_discord_repeat_timer)
         self.discord_send_status_signal.connect(self.discord_tab.set_send_status)
+        self.discord_message_id_signal.connect(self._set_discord_message_id)
         self.mods_tab.refresh_requested.connect(self._refresh_mods_with_overlay)
         self.settings_tab.sandbox_edit_requested.connect(self._open_sandbox_editor)
         self.tab_widget.currentChanged.connect(self._on_tab_changed)
@@ -1607,9 +1609,8 @@ class MainWindow(QMainWindow):
 
         clean_message_id = (message_id or "").strip()
         if clean_message_id and not clean_message_id.isdigit():
-            # Invalid message id format; send as a new message instead of failing in PATCH mode.
-            self.discord_send_status_signal.emit("Send status: Message ID format invalid; sending as new message")
-            clean_message_id = ""
+            self.discord_send_status_signal.emit("Send status: Message ID format invalid; use digits only")
+            return
 
         threading.Thread(
             target=self._send_discord_webhook_worker,
@@ -1675,33 +1676,16 @@ class MainWindow(QMainWindow):
             status_code = int(resp.status_code)
 
             if 200 <= status_code < 300:
+                if method == "POST":
+                    try:
+                        response_json = resp.json()
+                        new_message_id = str(response_json.get("id", "")).strip()
+                        if new_message_id.isdigit():
+                            self.discord_message_id_signal.emit(new_message_id)
+                    except Exception:
+                        pass
                 self.discord_send_status_signal.emit(f"Send status: Success ({status_code})")
                 return
-
-            # If edit mode fails for any reason, retry by sending a new message.
-            if method == "PATCH":
-                try:
-                    joiner = "&" if "?" in webhook_url else "?"
-                    fallback_url = f"{webhook_url}{joiner}wait=true"
-                    fallback_resp = requests.post(
-                        fallback_url,
-                        headers=headers,
-                        json=payload,
-                        timeout=20,
-                    )
-                    fallback_status = int(fallback_resp.status_code)
-
-                    if 200 <= fallback_status < 300:
-                        self.discord_send_status_signal.emit(
-                            f"Send status: Edit failed; sent as new message instead ({fallback_status})"
-                        )
-                        return
-
-                    self.output_signal.emit(
-                        f"[Discord] PATCH fallback POST failed with HTTP {fallback_status}: {fallback_resp.text}"
-                    )
-                except Exception as fallback_exc:
-                    self.output_signal.emit(f"[Discord] PATCH fallback POST failed: {fallback_exc}")
 
             details = resp.text or ""
             if status_code == 403:
@@ -1719,6 +1703,12 @@ class MainWindow(QMainWindow):
             self.output_signal.emit(f"[Discord] Failed to send webhook: {exc}")
         finally:
             self._discord_repeat_sending = False
+
+    def _set_discord_message_id(self, message_id):
+        if not message_id:
+            return
+        self.discord_tab.message_id.setText(message_id)
+        self.discord_tab.save_state()
 
     def update_status(self):
         self._handle_crash_recovery()

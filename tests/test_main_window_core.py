@@ -124,3 +124,79 @@ def test_load_mods_if_needed_skips_when_cached():
     MainWindow._load_mods_if_needed(win)
     assert call_count["count"] == 1
     assert win._loaded_for_ini["mods"] == ini_path
+
+
+def test_send_discord_webhook_rejects_non_numeric_message_id(qapp, monkeypatch):
+    win = _build_lightweight_window(monkeypatch)
+    statuses = []
+    thread_started = {"value": False}
+
+    class _FakeThread:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def start(self):
+            thread_started["value"] = True
+
+    monkeypatch.setattr("app.ui.main_window.threading.Thread", _FakeThread)
+    win.discord_send_status_signal.connect(statuses.append)
+
+    win._send_discord_webhook("https://discord.com/api/webhooks/1/2", "not-a-number", {"content": "x"})
+
+    assert thread_started["value"] is False
+    assert any("digits only" in s for s in statuses)
+
+
+def test_send_discord_worker_captures_message_id_from_post(qapp, monkeypatch):
+    win = _build_lightweight_window(monkeypatch)
+    captured_ids = []
+    statuses = []
+
+    class _Resp:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {"id": "987654321"}
+
+    def _fake_request(method, url, headers, json, timeout):
+        return _Resp()
+
+    monkeypatch.setattr("app.ui.main_window.requests.request", _fake_request)
+    win.discord_message_id_signal.connect(captured_ids.append)
+    win.discord_send_status_signal.connect(statuses.append)
+
+    win._discord_repeat_sending = True
+    win._send_discord_webhook_worker("https://discord.com/api/webhooks/1/2", "", {"content": "x"})
+
+    assert captured_ids == ["987654321"]
+    assert any("Success" in s for s in statuses)
+    assert win._discord_repeat_sending is False
+
+
+def test_send_discord_worker_does_not_fallback_to_post_on_patch_error(qapp, monkeypatch):
+    win = _build_lightweight_window(monkeypatch)
+    statuses = []
+    fallback_called = {"value": False}
+
+    class _Resp:
+        status_code = 404
+        text = "missing"
+
+    def _fake_request(method, url, headers, json, timeout):
+        return _Resp()
+
+    def _fake_post(*args, **kwargs):
+        fallback_called["value"] = True
+        return _Resp()
+
+    monkeypatch.setattr("app.ui.main_window.requests.request", _fake_request)
+    monkeypatch.setattr("app.ui.main_window.requests.post", _fake_post)
+    win.discord_send_status_signal.connect(statuses.append)
+
+    win._discord_repeat_sending = True
+    win._send_discord_webhook_worker("https://discord.com/api/webhooks/1/2", "123", {"content": "x"})
+
+    assert fallback_called["value"] is False
+    assert any("HTTP 404" in s for s in statuses)
+    assert win._discord_repeat_sending is False

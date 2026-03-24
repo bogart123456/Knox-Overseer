@@ -250,7 +250,7 @@ class ModsTab(QWidget):
             seen_wids = set()
             workshop_ids = []
             for row in range(self.mods_table.rowCount()):
-                if row < len(self.enabled_checkboxes) and self.enabled_checkboxes[row].isChecked():
+                if self._is_row_enabled(row):
                     wid_item = self.mods_table.item(row, 2)
                     if wid_item:
                         wid = wid_item.text().strip()
@@ -260,7 +260,7 @@ class ModsTab(QWidget):
             # Collect enabled Mod IDs in table order
             mod_ids = []
             for row in range(self.mods_table.rowCount()):
-                if row < len(self.enabled_checkboxes) and self.enabled_checkboxes[row].isChecked():
+                if self._is_row_enabled(row):
                     mod_id_item = self.mods_table.item(row, 1)
                     if mod_id_item:
                         mod_id = mod_id_item.text().strip()
@@ -324,6 +324,43 @@ class ModsTab(QWidget):
         self.mods_table.setCellWidget(row_count, 4, container)
         self.enabled_checkboxes.append(checkbox)
 
+    def _sync_enabled_checkboxes_with_table(self):
+        synced = []
+        for row in range(self.mods_table.rowCount()):
+            checkbox = self._get_row_checkbox(row)
+            if checkbox is not None:
+                synced.append(checkbox)
+        self.enabled_checkboxes = synced
+
+    def _get_row_checkbox(self, row):
+        if row < 0 or row >= self.mods_table.rowCount():
+            return None
+
+        container = self.mods_table.cellWidget(row, 4)
+        if container is None:
+            return None
+
+        return container.findChild(CheckMarkBox)
+
+    def _is_row_enabled(self, row):
+        checkbox = self._get_row_checkbox(row)
+        return bool(checkbox and checkbox.isChecked())
+
+    def _swap_checkbox_widgets(self, row_a, row_b):
+        checkbox_a = self._get_row_checkbox(row_a)
+        checkbox_b = self._get_row_checkbox(row_b)
+        if checkbox_a is None or checkbox_b is None:
+            return
+
+        checked_a = checkbox_a.isChecked()
+        enabled_a = checkbox_a.isEnabled()
+
+        checkbox_a.setChecked(checkbox_b.isChecked())
+        checkbox_a.setEnabled(checkbox_b.isEnabled())
+
+        checkbox_b.setChecked(checked_a)
+        checkbox_b.setEnabled(enabled_a)
+
     def _is_mandatory_row(self, row):
         mod_item = self.mods_table.item(row, 1)
         wid_item = self.mods_table.item(row, 2)
@@ -347,9 +384,11 @@ class ModsTab(QWidget):
 
         for row in range(self.mods_table.rowCount()):
             if self._is_mandatory_row(row):
-                if row < len(self.enabled_checkboxes):
-                    self.enabled_checkboxes[row].setChecked(True)
-                    self.enabled_checkboxes[row].setEnabled(False)
+                row_checkbox = self._get_row_checkbox(row)
+                if row_checkbox is not None:
+                    row_checkbox.setChecked(True)
+                    row_checkbox.setEnabled(False)
+                self._sync_enabled_checkboxes_with_table()
                 return
 
         required_mod_data = self._create_mod_data(
@@ -367,6 +406,7 @@ class ModsTab(QWidget):
             True,
             lock_enabled=True,
         )
+        self._sync_enabled_checkboxes_with_table()
 
     def populate_mods_table(self, workshop_ids, enabled_mods=None, mods_list=None):
         if enabled_mods is None:
@@ -416,6 +456,7 @@ class ModsTab(QWidget):
             )
 
         self._ensure_mandatory_mod_present()
+        self._sync_enabled_checkboxes_with_table()
         self._apply_search_filter(self.search_input.text())
 
     def add_mod(self):
@@ -425,22 +466,16 @@ class ModsTab(QWidget):
             # Fetch mod details from Steam API
             mod_data = self.fetch_mod_details(workshop_id, use_cache=False)
             for mod_id in mod_data['mod_ids']:
-                row_count = self.mods_table.rowCount()
-                self.mods_table.insertRow(row_count)
-                self.mod_data_list.append(mod_data)  # Same mod_data for all rows of same Workshop ID
-                self.mods_table.setItem(row_count, 0, QTableWidgetItem(mod_data.get('title', f'Workshop {workshop_id}')))  # Name
-                self.mods_table.setItem(row_count, 1, QTableWidgetItem(mod_id))  # Mod ID
-                self.mods_table.setItem(row_count, 2, QTableWidgetItem(workshop_id))  # Workshop ID
-                self.mods_table.setItem(row_count, 3, QTableWidgetItem(self.format_update_time(mod_data.get('time_updated', 0))))  # Update
-                # Enabled checkbox
-                checkbox = CheckMarkBox(True)
-                container = QWidget()
-                layout = QHBoxLayout(container)
-                layout.setContentsMargins(0, 0, 0, 0)
-                layout.addWidget(checkbox, alignment=Qt.AlignCenter)
-                self.mods_table.setCellWidget(row_count, 4, container)
-                self.enabled_checkboxes.append(checkbox)
+                self._add_mod_row(
+                    mod_data.get('title', f'Workshop {workshop_id}'),
+                    mod_id,
+                    workshop_id,
+                    self.format_update_time(mod_data.get('time_updated', 0)),
+                    mod_data,
+                    True,
+                )
             self._ensure_mandatory_mod_present()
+            self._sync_enabled_checkboxes_with_table()
             self._apply_search_filter(self.search_input.text())
             # Update workshop info box with the last added mod data
             self.update_workshop_info(mod_data)
@@ -538,11 +573,23 @@ class ModsTab(QWidget):
             if self._is_mandatory_mod_enforced() and self._is_mandatory_row(current_row):
                 QMessageBox.warning(self, "Required Mod", "KnoxOverseer is required and cannot be removed.")
                 return
+
+            confirm = QMessageBox.question(
+                self,
+                "Confirm Removal",
+                "Remove selected mod from the list?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if confirm != QMessageBox.Yes:
+                return
+
             self.mods_table.removeRow(current_row)
             if current_row < len(self.mod_data_list):
                 del self.mod_data_list[current_row]
             if current_row < len(self.enabled_checkboxes):
                 del self.enabled_checkboxes[current_row]
+            self._sync_enabled_checkboxes_with_table()
             self._apply_search_filter(self.search_input.text())
 
     def move_up(self):
@@ -556,17 +603,10 @@ class ModsTab(QWidget):
                 item_current = self.mods_table.takeItem(current_row, col)
                 self.mods_table.setItem(current_row - 1, col, item_current)
                 self.mods_table.setItem(current_row, col, item_above)
-            # Swap checkbox states so enabled/disabled follows the moved mod.
-            if current_row < len(self.enabled_checkboxes):
-                checked_above = self.enabled_checkboxes[current_row - 1].isChecked()
-                checked_current = self.enabled_checkboxes[current_row].isChecked()
-                self.enabled_checkboxes[current_row - 1].setChecked(checked_current)
-                self.enabled_checkboxes[current_row].setChecked(checked_above)
+            self._swap_checkbox_widgets(current_row - 1, current_row)
             # Swap mod_data
             self.mod_data_list[current_row - 1], self.mod_data_list[current_row] = self.mod_data_list[current_row], self.mod_data_list[current_row - 1]
-            # Keep checkbox list index aligned with visual row index
-            if current_row < len(self.enabled_checkboxes):
-                self.enabled_checkboxes[current_row - 1], self.enabled_checkboxes[current_row] = self.enabled_checkboxes[current_row], self.enabled_checkboxes[current_row - 1]
+            self._sync_enabled_checkboxes_with_table()
             self.mods_table.setCurrentCell(current_row - 1, 0)
 
     def move_down(self):
@@ -580,15 +620,8 @@ class ModsTab(QWidget):
                 item_current = self.mods_table.takeItem(current_row, col)
                 self.mods_table.setItem(current_row + 1, col, item_current)
                 self.mods_table.setItem(current_row, col, item_below)
-            # Swap checkbox states so enabled/disabled follows the moved mod.
-            if current_row + 1 < len(self.enabled_checkboxes):
-                checked_current = self.enabled_checkboxes[current_row].isChecked()
-                checked_below = self.enabled_checkboxes[current_row + 1].isChecked()
-                self.enabled_checkboxes[current_row].setChecked(checked_below)
-                self.enabled_checkboxes[current_row + 1].setChecked(checked_current)
+            self._swap_checkbox_widgets(current_row, current_row + 1)
             # Swap mod_data
             self.mod_data_list[current_row + 1], self.mod_data_list[current_row] = self.mod_data_list[current_row], self.mod_data_list[current_row + 1]
-            # Keep checkbox list index aligned with visual row index
-            if current_row + 1 < len(self.enabled_checkboxes):
-                self.enabled_checkboxes[current_row + 1], self.enabled_checkboxes[current_row] = self.enabled_checkboxes[current_row], self.enabled_checkboxes[current_row + 1]
+            self._sync_enabled_checkboxes_with_table()
             self.mods_table.setCurrentCell(current_row + 1, 0)

@@ -1,4 +1,5 @@
 from PySide6.QtWidgets import QLineEdit, QTableWidgetItem
+from PySide6.QtWidgets import QMessageBox
 from app.ui.mods_tab import ModsTab
 from app.ui.mods_tab import MANDATORY_MOD_ID, MANDATORY_WORKSHOP_ID
 
@@ -133,3 +134,79 @@ def test_save_config_forces_knoxoverseer_on_non_linux(qapp, tmp_path, monkeypatc
     content = ini_path.read_text(encoding="utf-8")
     assert MANDATORY_MOD_ID in content
     assert MANDATORY_WORKSHOP_ID in content
+
+
+def test_move_up_keeps_enabled_state_bound_to_mod_row(qapp, monkeypatch):
+    tab = ModsTab(_SettingsStub())
+    monkeypatch.setattr("app.ui.mods_tab.sys.platform", "linux")
+
+    mod_a = {"title": "A", "description": "", "creator": "", "time_updated": 0, "mod_ids": ["A"]}
+    mod_b = {"title": "B", "description": "", "creator": "", "time_updated": 0, "mod_ids": ["B"]}
+
+    tab._add_mod_row("A", "A", "111", "Unknown", mod_a, False)
+    tab._add_mod_row("B", "B", "222", "Unknown", mod_b, True)
+
+    tab.mods_table.setCurrentCell(1, 0)
+    tab.move_up()
+
+    assert tab.mods_table.item(0, 1).text() == "B"
+    assert tab.mods_table.item(1, 1).text() == "A"
+    assert tab._is_row_enabled(0) is True
+    assert tab._is_row_enabled(1) is False
+
+
+def test_reorder_persists_enabled_state_for_correct_mods(qapp, tmp_path, monkeypatch):
+    tab = ModsTab(_SettingsStub())
+    ini_path = tmp_path / "server.ini"
+    ini_path.write_text("WorkshopItems=111;222\nMods=A;B\n", encoding="utf-8")
+    tab.settings_tab.ini_path.setText(str(ini_path))
+    monkeypatch.setattr("app.ui.mods_tab.sys.platform", "linux")
+
+    mod_a = {"title": "A", "description": "", "creator": "", "time_updated": 0, "mod_ids": ["A"]}
+    mod_b = {"title": "B", "description": "", "creator": "", "time_updated": 0, "mod_ids": ["B"]}
+    mod_c = {"title": "C", "description": "", "creator": "", "time_updated": 0, "mod_ids": ["C"]}
+
+    tab._add_mod_row("A", "A", "111", "Unknown", mod_a, True)
+    tab._add_mod_row("B", "B", "222", "Unknown", mod_b, False)
+    tab._add_mod_row("C", "C", "333", "Unknown", mod_c, True)
+
+    # Move disabled mod B above A, then move enabled C up once.
+    tab.mods_table.setCurrentCell(1, 0)
+    tab.move_up()
+    tab.mods_table.setCurrentCell(2, 0)
+    tab.move_up()
+
+    # Expected mod order: B (disabled), C (enabled), A (enabled)
+    assert tab.mods_table.item(0, 1).text() == "B"
+    assert tab.mods_table.item(1, 1).text() == "C"
+    assert tab.mods_table.item(2, 1).text() == "A"
+    assert tab._is_row_enabled(0) is False
+    assert tab._is_row_enabled(1) is True
+    assert tab._is_row_enabled(2) is True
+
+    ok = tab.save_config_silent()
+    assert ok is True
+
+    content = ini_path.read_text(encoding="utf-8")
+    assert "WorkshopItems=333;111" in content
+    assert "Mods=C;A" in content
+
+
+def test_remove_mod_requires_confirmation(qapp, monkeypatch):
+    tab = ModsTab(_SettingsStub())
+    monkeypatch.setattr("app.ui.mods_tab.sys.platform", "linux")
+
+    mod_data = {"title": "A", "description": "", "creator": "", "time_updated": 0, "mod_ids": ["A"]}
+    tab._add_mod_row("A", "A", "111", "Unknown", mod_data, True)
+    tab._add_mod_row("B", "B", "222", "Unknown", mod_data, True)
+
+    tab.mods_table.setCurrentCell(0, 0)
+
+    monkeypatch.setattr("app.ui.mods_tab.QMessageBox.question", lambda *args, **kwargs: QMessageBox.No)
+    tab.remove_mod()
+    assert tab.mods_table.rowCount() == 2
+
+    monkeypatch.setattr("app.ui.mods_tab.QMessageBox.question", lambda *args, **kwargs: QMessageBox.Yes)
+    tab.remove_mod()
+    assert tab.mods_table.rowCount() == 1
+    assert tab.mods_table.item(0, 1).text() == "B"
