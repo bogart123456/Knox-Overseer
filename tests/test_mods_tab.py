@@ -102,6 +102,37 @@ def test_refresh_mods_can_target_specific_workshop_ids(qapp):
     assert calls == ["222"]
 
 
+def test_populate_mods_respects_mods_ini_order_for_workshop_mods(qapp):
+    tab = ModsTab(_SettingsStub())
+
+    details = {
+        "111": {
+            "title": "First Workshop",
+            "description": "",
+            "creator": "",
+            "time_updated": 0,
+            "mod_ids": ["A"],
+        },
+        "222": {
+            "title": "Second Workshop",
+            "description": "",
+            "creator": "",
+            "time_updated": 0,
+            "mod_ids": ["B"],
+        },
+    }
+
+    tab.fetch_mod_details = lambda wid, use_cache=True: details[wid]
+
+    # WorkshopItems order is A then B, but Mods load order is B then A.
+    tab.populate_mods_table(["111", "222"], enabled_mods={"A", "B"}, mods_list=["B", "A"])
+
+    assert tab.mods_table.item(0, 1).text() == "B"
+    assert tab.mods_table.item(0, 2).text() == "222"
+    assert tab.mods_table.item(1, 1).text() == "A"
+    assert tab.mods_table.item(1, 2).text() == "111"
+
+
 def test_save_config_does_not_force_knoxoverseer_on_linux(qapp, tmp_path, monkeypatch):
     tab = ModsTab(_SettingsStub())
     ini_path = tmp_path / "server.ini"

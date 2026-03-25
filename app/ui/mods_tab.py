@@ -417,43 +417,75 @@ class ModsTab(QWidget):
         self.mod_data_list = []
         self.enabled_checkboxes = []
 
-        listed_mod_ids = set()
-        for wid in workshop_ids:
-            if wid.strip():
-                mod_data = self.fetch_mod_details(wid.strip(), use_cache=True)
-                for mod_id in mod_data['mod_ids']:
-                    clean_mod_id = (mod_id or "").strip()
-                    if not clean_mod_id:
-                        continue
-                    listed_mod_ids.add(clean_mod_id)
-                    self._add_mod_row(
-                        mod_data.get('title', 'Unknown'),
-                        clean_mod_id,
-                        wid.strip(),
-                        self.format_update_time(mod_data.get('time_updated', 0)),
-                        mod_data,
-                        clean_mod_id in enabled_mods,
-                    )
+        # Build a lookup from Mod ID -> Workshop metadata so we can render rows
+        # in Mods= order while still showing Workshop details when available.
+        mod_lookup = {}
+        workshop_discovered = []
+        for raw_wid in workshop_ids:
+            wid = (raw_wid or "").strip()
+            if not wid:
+                continue
 
-        # Include local/non-Workshop mods that exist in Mods= but not in WorkshopItems-derived rows.
-        for mod_id in mods_list:
+            mod_data = self.fetch_mod_details(wid, use_cache=True)
+            for mod_id in mod_data.get('mod_ids', []):
+                clean_mod_id = (mod_id or "").strip()
+                if not clean_mod_id:
+                    continue
+
+                workshop_discovered.append((clean_mod_id, wid, mod_data))
+                if clean_mod_id not in mod_lookup:
+                    mod_lookup[clean_mod_id] = (wid, mod_data)
+
+        listed_mod_ids = set()
+
+        # Respect load order from Mods= when rendering the table.
+        for raw_mod_id in mods_list:
+            mod_id = (raw_mod_id or "").strip()
+            if not mod_id or mod_id in listed_mod_ids:
+                continue
+
+            if mod_id in mod_lookup:
+                wid, mod_data = mod_lookup[mod_id]
+                self._add_mod_row(
+                    mod_data.get('title', 'Unknown'),
+                    mod_id,
+                    wid,
+                    self.format_update_time(mod_data.get('time_updated', 0)),
+                    mod_data,
+                    mod_id in enabled_mods,
+                )
+            else:
+                local_mod_data = self._create_mod_data(
+                    mod_id,
+                    'Local mod from Mods= (not linked to a Workshop item).',
+                    'Local',
+                    [mod_id]
+                )
+                self._add_mod_row(
+                    mod_id,
+                    mod_id,
+                    '',
+                    'Local',
+                    local_mod_data,
+                    mod_id in enabled_mods,
+                )
+
+            listed_mod_ids.add(mod_id)
+
+        # Append Workshop-derived mods that are not listed in Mods=.
+        for mod_id, wid, mod_data in workshop_discovered:
             if mod_id in listed_mod_ids:
                 continue
 
-            local_mod_data = self._create_mod_data(
-                mod_id,
-                'Local mod from Mods= (not linked to a Workshop item).',
-                'Local',
-                [mod_id]
-            )
             self._add_mod_row(
+                mod_data.get('title', 'Unknown'),
                 mod_id,
-                mod_id,
-                '',
-                'Local',
-                local_mod_data,
+                wid,
+                self.format_update_time(mod_data.get('time_updated', 0)),
+                mod_data,
                 mod_id in enabled_mods,
             )
+            listed_mod_ids.add(mod_id)
 
         self._ensure_mandatory_mod_present()
         self._sync_enabled_checkboxes_with_table()
