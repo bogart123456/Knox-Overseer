@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 
+from PySide6.QtWidgets import QLineEdit
+
 from .sandbox_tab import SandboxVarsTab
 
 
@@ -56,6 +58,8 @@ def parse_ini(raw_text: str):
 
 
 class IniTab(SandboxVarsTab):
+    _PASSWORD_KEYS = {"serverpassword", "rconpassword"}
+
     def _editor_name(self) -> str:
         return "INI"
 
@@ -77,3 +81,11 @@ class IniTab(SandboxVarsTab):
     def _filter_sections_during_search(self) -> bool:
         # Keep section containers visible in INI to avoid extra layout churn.
         return False
+
+    def _create_widget(self, field: dict):
+        # Password keys must stay literal text to avoid numeric/boolean coercion.
+        if field["key"].strip().lower() in self._PASSWORD_KEYS:
+            le = QLineEdit(field["raw_value"])
+            le.setMinimumWidth(300)
+            return le, "raw"
+        return super()._create_widget(field)

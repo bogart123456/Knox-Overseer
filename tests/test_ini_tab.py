@@ -65,3 +65,28 @@ def test_ini_tab_load_rebuilds_when_placeholder_is_showing(tmp_path, qapp):
 
     assert not isinstance(tab._scroll.widget(), QLabel)
     assert len(tab._field_widgets) == 2
+
+
+def test_ini_tab_preserves_password_values_as_literal_text(tmp_path, qapp):
+    ini_path = tmp_path / "servertest.ini"
+    ini_path.write_text(
+        "ServerPassword=0000\nRCONPassword=01234\nPublic=true\n",
+        encoding="utf-8",
+    )
+
+    tab = IniTab()
+    tab.set_path(str(ini_path))
+
+    server_password = tab._field_widgets[("General", "ServerPassword")]
+    rcon_password = tab._field_widgets[("General", "RCONPassword")]
+    public_field = tab._field_widgets[("General", "Public")]
+
+    assert server_password["wtype"] == "raw"
+    assert rcon_password["wtype"] == "raw"
+
+    public_field["widget"].setChecked(False)
+    tab.save()
+
+    content = ini_path.read_text(encoding="utf-8")
+    assert "ServerPassword=0000" in content
+    assert "RCONPassword=01234" in content

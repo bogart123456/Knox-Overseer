@@ -775,10 +775,10 @@ class MainWindow(QMainWindow):
 
     def _message_for_minutes(self, minutes):
         if minutes == 60:
-            return "servermsg Server will restart in 1 hour"
+            return "servermsg \"Server will restart in 1 hour\""
         if minutes == 1:
-            return "servermsg Server will restart in 1 minute"
-        return f"servermsg Server will restart in {minutes} minutes"
+            return "servermsg \"Server will restart in 1 minute\""
+        return f"servermsg \"Server will restart in {minutes} minutes\""
 
     def _parse_ini_for_rcon(self, emit_errors=False):
         ini_path = self.settings_tab.ini_path.text().strip()
@@ -900,7 +900,7 @@ class MainWindow(QMainWindow):
             self._mod_update_pending_restart_at = datetime.now() + timedelta(minutes=minutes)
             for wid in changed_wids:
                 mod_name = current_names.get(wid, wid).replace('"', "'")
-                msg = f'servermsg The Mod "{mod_name}" requires an update, Server will restart in {minutes} minutes'
+                msg = f'servermsg "The Mod {mod_name} requires an update, Server will restart in {minutes} minutes"'
                 self._send_server_message(msg)
 
             self._mod_baseline = dict(current_versions)
@@ -1072,7 +1072,7 @@ class MainWindow(QMainWindow):
         for sec in range(10, 0, -1):
             key = f"sec-{sec}"
             if remaining <= sec and key not in self._sent_restart_alerts:
-                self._send_server_message(f"servermsg Server will restart in {sec} seconds")
+                self._send_server_message(f"servermsg \"Server will restart in {sec} seconds\"")
                 self._sent_restart_alerts.add(key)
 
         # Trigger scheduled restart exactly at or after schedule boundary.
