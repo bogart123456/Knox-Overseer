@@ -31,6 +31,57 @@ from .sandbox_tab import SandboxVarsTab
 from .settings_store import get_app_settings
 
 class MainWindow(QMainWindow):
+
+    def _setup_user_log_watcher(self, user_log_path):
+        from PySide6.QtCore import QFileSystemWatcher
+        import os
+        # Remove previous watcher if exists
+        if hasattr(self, '_user_log_watcher') and self._user_log_watcher:
+            try:
+                self._user_log_watcher.fileChanged.disconnect()
+            except Exception:
+                pass
+            self._user_log_watcher.removePaths(self._user_log_watcher.files())
+        else:
+            self._user_log_watcher = QFileSystemWatcher()
+        self._user_log_last_pos = 0
+        self._user_log_path = user_log_path
+        if os.path.isfile(user_log_path):
+            self._user_log_watcher.addPath(user_log_path)
+            self._user_log_watcher.fileChanged.connect(self._on_user_log_changed)
+            try:
+                with open(user_log_path, 'r', encoding='utf-8', errors='replace') as f:
+                    f.seek(0, os.SEEK_END)
+                    self._user_log_last_pos = f.tell()
+            except Exception:
+                self._user_log_last_pos = 0
+        # If file does not exist, do nothing. Watcher will be re-setup when file appears and is selected.
+
+    def _on_user_log_changed(self, path):
+        import re, os
+        if not os.path.isfile(path):
+            # File was deleted or not yet created; just skip
+            return
+        try:
+            with open(path, 'r', encoding='utf-8', errors='replace') as f:
+                f.seek(self._user_log_last_pos)
+                new_lines = f.readlines()
+                self._user_log_last_pos = f.tell()
+        except Exception:
+            return
+        for line in new_lines:
+            # Example join: [27-03-26 05:24:56.482] 76561199148788174 "Xan2" fully connected (10665,9864,0).
+            # Example leave: [27-03-26 06:40:09.845] 76561199148788174 "Xan2" disconnected player (10673,10621,0).
+            join_match = re.search(r'"([^"]+)" fully connected', line)
+            if join_match:
+                username = join_match.group(1)
+                self.send_rcon_command(f'servermsg "{username} Joined."')
+                continue
+            leave_match = re.search(r'"([^"]+)" disconnected player', line)
+            if leave_match:
+                username = leave_match.group(1)
+                self.send_rcon_command(f'servermsg "{username} Left."')
+
     output_signal = Signal(str)
     rcon_response = Signal(str, str)
     mod_updates_detected = Signal(object)
@@ -735,6 +786,9 @@ class MainWindow(QMainWindow):
             with open(log_path, 'r', encoding='utf-8', errors='replace') as f:
                 self.console_tab.log_content.setPlainText(f.read())
             self._current_log_path = log_path
+            # If this is a *_user.txt log, set up watcher
+            if log_path.lower().endswith('_user.txt'):
+                self._setup_user_log_watcher(log_path)
         except Exception as e:
             self.console_tab.log_content.setPlainText(f"Failed to load log file:\n{e}")
 
@@ -1457,11 +1511,19 @@ class MainWindow(QMainWindow):
                 if "join" in lower_line and "attempt" in lower_line:
                     self.check_mod_updates()
 
-                # Best-effort player count tracking from server output.
+                # Best-effort player count tracking from server output and join/leave messages.
                 if "connected" in lower_line and "player" in lower_line:
                     self._connected_players += 1
+                    # Try to extract player name and send join message
+                    player_name = self._extract_player_name(line)
+                    if player_name:
+                        self.send_rcon_command(f'servermsg "{player_name} Joined."')
                 elif "disconnected" in lower_line and "player" in lower_line:
                     self._connected_players = max(0, self._connected_players - 1)
+                    # Try to extract player name and send leave message
+                    player_name = self._extract_player_name(line)
+                    if player_name:
+                        self.send_rcon_command(f'servermsg "{player_name} Left."')
 
                 # Log-based readiness hints for environments where RCON is delayed.
                 if (
@@ -1472,6 +1534,17 @@ class MainWindow(QMainWindow):
                 ):
                     self._mark_server_ready("log")
         pipe.close()
+
+    def _extract_player_name(self, line):
+        # Attempt to extract player name from log line
+        # Example log lines:
+        # "Player JohnDoe (123.45.67.89:12345) connected"
+        # "Player JohnDoe (123.45.67.89:12345) disconnected"
+        import re
+        match = re.search(r"Player ([^\s]+) ", line)
+        if match:
+            return match.group(1)
+        return None
 
     def append_to_terminal(self, text):
         self.console_tab.terminal_output.append(text)
