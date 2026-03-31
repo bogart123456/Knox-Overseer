@@ -59,10 +59,33 @@ class MainWindow(QMainWindow):
 
     def _on_user_log_changed(self, path):
         import re, os
+        from PySide6.QtCore import QTimer
+        # If file is missing, it may have been deleted/replaced. Remove from watcher and poll for reappearance.
         if not os.path.isfile(path):
-            # File was deleted or not yet created; just skip
+            try:
+                if hasattr(self, '_user_log_watcher'):
+                    self._user_log_watcher.removePath(path)
+            except Exception:
+                pass
+            # Start a short timer to check for file reappearance
+            def _try_readd_user_log():
+                if os.path.isfile(path):
+                    try:
+                        self._user_log_watcher.addPath(path)
+                        self._user_log_last_pos = 0
+                        self._on_user_log_changed(path)  # Process any new lines immediately
+                    except Exception:
+                        pass
+                else:
+                    # Try again in 1 second
+                    QTimer.singleShot(1000, _try_readd_user_log)
+            QTimer.singleShot(1000, _try_readd_user_log)
             return
         try:
+            file_size = os.path.getsize(path)
+            # Detect log rotation/truncation: if file is smaller than last position, reset
+            if file_size < getattr(self, '_user_log_last_pos', 0):
+                self._user_log_last_pos = 0
             with open(path, 'r', encoding='utf-8', errors='replace') as f:
                 f.seek(self._user_log_last_pos)
                 new_lines = f.readlines()
