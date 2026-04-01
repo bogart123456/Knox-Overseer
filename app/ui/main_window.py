@@ -17,6 +17,7 @@ import time
 import traceback
 import zipfile
 import configparser
+import re
 import urllib.parse
 import requests
 from datetime import datetime, timedelta
@@ -111,6 +112,7 @@ class MainWindow(QMainWindow):
     backup_status_signal = Signal(str)
     discord_send_status_signal = Signal(str)
     discord_message_id_signal = Signal(str)
+    restart_request_signal = Signal(str)
 
     def __init__(self):
         super().__init__()
@@ -296,6 +298,7 @@ class MainWindow(QMainWindow):
         self.console_tab.log_selected.connect(self.load_log_content)
         self.rcon_response.connect(self._on_rcon_response)
         self.mod_updates_detected.connect(self._on_mod_updates_detected)
+        self.restart_request_signal.connect(self._request_restart)
         self.backup_status_signal.connect(self.backup_tab.set_status)
         self.backup_tab.restore_requested.connect(self._request_restore_backup)
         self.backup_tab.backup_settings_changed.connect(self._apply_builtin_backup_settings)
@@ -881,13 +884,37 @@ class MainWindow(QMainWindow):
         if rcon_port and rcon_password:
             try:
                 response = self.rcon_execute(self.settings_tab.get_rcon_host(), int(rcon_port), rcon_password, 'players')
-                lines = [line.strip() for line in response.splitlines() if line.strip()]
-                # PZ players command commonly returns entries containing " - " for each player row.
-                count = sum(1 for line in lines if ' - ' in line)
-                return count
+                parsed_count = self._parse_players_count_response(response)
+                if parsed_count is not None:
+                    return parsed_count
             except Exception:
                 pass
         return max(0, self._connected_players)
+
+    def _parse_players_count_response(self, response):
+        text = (response or "").strip()
+        if not text:
+            return None
+
+        lowered = text.lower()
+        if "no players connected" in lowered:
+            return 0
+
+        header_match = re.search(r"players\s+connected\s*\((\d+)\)", lowered)
+        if header_match:
+            return int(header_match.group(1))
+
+        total_match = re.search(r"\btotal\s*[:=]\s*(\d+)\b", lowered)
+        if total_match:
+            return int(total_match.group(1))
+
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        dashed_rows = sum(1 for line in lines if " - " in line)
+        if dashed_rows > 0:
+            return dashed_rows
+
+        # Unknown response format; let caller use fallback tracking.
+        return None
 
     def _collect_workshop_rows(self):
         rows = []
@@ -960,6 +987,9 @@ class MainWindow(QMainWindow):
             if not changed_wids:
                 return
 
+            changed_names = [current_names.get(wid, wid) for wid in changed_wids]
+            self.output_signal.emit(f"[ModUpdate] Detected updated mods: {', '.join(changed_names)}")
+
             # Update Mods table on the UI thread so changed entries are visible immediately.
             self.mod_updates_detected.emit({
                 'changed_wids': changed_wids,
@@ -970,7 +1000,7 @@ class MainWindow(QMainWindow):
             if player_count <= 0:
                 self.output_signal.emit("[ModUpdate] Mod update detected and no players are online. Restarting immediately.")
                 self._mod_baseline = dict(current_versions)
-                self._request_restart("ModUpdate")
+                self.restart_request_signal.emit("ModUpdate")
                 return
 
             minutes = self.settings_tab.get_mod_update_alert_minutes()
@@ -991,6 +1021,7 @@ class MainWindow(QMainWindow):
             return
         if self._mod_check_in_progress:
             return
+        self.output_signal.emit("[ModUpdate] Checking for mods update...")
         self._mod_check_in_progress = True
         threading.Thread(target=self._run_mod_check, daemon=True).start()
 
@@ -1589,9 +1620,10 @@ class MainWindow(QMainWindow):
                     "Server Starting",
                     "Server is still initializing. Stopping during startup is blocked to avoid corruption.",
                 )
-            self.output_signal.emit("Stop blocked: server is still initializing.")
-            self._update_control_buttons()
-            return
+                self.output_signal.emit("Stop blocked: server is still initializing.")
+                self._update_control_buttons()
+                return
+            self.output_signal.emit("Stop requested by automation while server is initializing; proceeding.")
 
         if intentional:
             confirm = QMessageBox.warning(

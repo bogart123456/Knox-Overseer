@@ -40,6 +40,82 @@ def test_restart_state_helper(qapp, monkeypatch):
     assert win._is_restart_in_progress() is True
 
 
+def test_mod_update_immediate_restart_emits_signal(qapp, monkeypatch):
+    win = _build_lightweight_window(monkeypatch)
+    win._mod_baseline = {"123": 1}
+
+    monkeypatch.setattr(win, "_collect_workshop_rows", lambda: [("123", "Test Mod")])
+    monkeypatch.setattr(
+        win,
+        "_fetch_mod_versions",
+        lambda _rows: ({"123": 2}, {"123": "Test Mod"}, {"123": {"time_updated": 2}}),
+    )
+    monkeypatch.setattr(win, "_get_player_count", lambda: 0)
+
+    requested = []
+    win.restart_request_signal.connect(requested.append)
+
+    win._run_mod_check()
+
+    assert requested == ["ModUpdate"]
+
+
+def test_parse_players_count_response_supports_header_format(qapp, monkeypatch):
+    win = _build_lightweight_window(monkeypatch)
+    response = "Players connected (2):\nAlice\nBob"
+
+    assert win._parse_players_count_response(response) == 2
+
+
+def test_mod_update_detection_emits_detected_message(qapp, monkeypatch):
+    win = _build_lightweight_window(monkeypatch)
+    win._mod_baseline = {"123": 1}
+
+    monkeypatch.setattr(win, "_collect_workshop_rows", lambda: [("123", "Test Mod")])
+    monkeypatch.setattr(
+        win,
+        "_fetch_mod_versions",
+        lambda _rows: ({"123": 2}, {"123": "Test Mod"}, {"123": {"time_updated": 2}}),
+    )
+    monkeypatch.setattr(win, "_get_player_count", lambda: 0)
+
+    events = []
+    win.output_signal.connect(events.append)
+
+    win._run_mod_check()
+
+    assert any("Detected updated mods: Test Mod" in event for event in events)
+
+
+def test_stop_server_allows_internal_stop_while_starting(qapp, monkeypatch):
+    win = _build_lightweight_window(monkeypatch)
+    win.console_tab = SimpleNamespace(
+        set_rcon_enabled=lambda _enabled: None,
+        terminal_output=SimpleNamespace(append=lambda _text: None),
+    )
+
+    class _FakeStdin:
+        def __init__(self):
+            self.commands = []
+
+        def write(self, text):
+            self.commands.append(text)
+
+        def flush(self):
+            return None
+
+    fake_stdin = _FakeStdin()
+    win.server_process = SimpleNamespace(stdin=fake_stdin)
+    win._server_starting = True
+    win._server_stopping = False
+    monkeypatch.setattr(win, "_is_server_active", lambda: True)
+
+    win.stop_server(intentional=False)
+
+    assert "quit\n" in fake_stdin.commands
+    assert win._server_stopping is True
+
+
 def test_crash_countdown_can_be_cancelled(qapp, monkeypatch):
     win = _build_lightweight_window(monkeypatch)
     win._crash_recovery_pending = True
