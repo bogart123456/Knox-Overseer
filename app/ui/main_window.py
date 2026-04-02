@@ -94,16 +94,11 @@ class MainWindow(QMainWindow):
         except Exception:
             return
         for line in new_lines:
-            # Example join: [27-03-26 05:24:56.482] 76561199148788174 "Xan2" fully connected (10665,9864,0).
-            # Example leave: [27-03-26 06:40:09.845] 76561199148788174 "Xan2" disconnected player (10673,10621,0).
-            join_match = re.search(r'"([^"]+)" fully connected', line)
-            if join_match:
-                username = join_match.group(1)
+            event, username = self._extract_player_event(line)
+            if event == "join" and username:
                 self.send_rcon_command(f'servermsg "{username} Joined."')
                 continue
-            leave_match = re.search(r'"([^"]+)" disconnected player', line)
-            if leave_match:
-                username = leave_match.group(1)
+            if event == "leave" and username:
                 self.send_rcon_command(f'servermsg "{username} Left."')
 
     output_signal = Signal(str)
@@ -938,7 +933,8 @@ class MainWindow(QMainWindow):
         names = {}
         details_by_wid = {}
         for wid, name in workshop_rows:
-            details = self.mods_tab.fetch_mod_details(wid)
+            # Always fetch fresh metadata for detection; cached values can hide updates.
+            details = self.mods_tab.fetch_mod_details(wid, use_cache=False)
             if details:
                 versions[wid] = int(details.get('time_updated', 0))
                 names[wid] = details.get('title', name) or name
@@ -1566,16 +1562,13 @@ class MainWindow(QMainWindow):
                     self.check_mod_updates()
 
                 # Best-effort player count tracking from server output and join/leave messages.
-                if "connected" in lower_line and "player" in lower_line:
+                player_event, player_name = self._extract_player_event(line)
+                if player_event == "join":
                     self._connected_players += 1
-                    # Try to extract player name and send join message
-                    player_name = self._extract_player_name(line)
                     if player_name:
                         self.send_rcon_command(f'servermsg "{player_name} Joined."')
-                elif "disconnected" in lower_line and "player" in lower_line:
+                elif player_event == "leave":
                     self._connected_players = max(0, self._connected_players - 1)
-                    # Try to extract player name and send leave message
-                    player_name = self._extract_player_name(line)
                     if player_name:
                         self.send_rcon_command(f'servermsg "{player_name} Left."')
 
@@ -1589,15 +1582,31 @@ class MainWindow(QMainWindow):
                     self._mark_server_ready("log")
         pipe.close()
 
+    def _extract_player_event(self, line):
+        lower_line = (line or "").lower()
+
+        is_join = "fully connected" in lower_line or (
+            "connected" in lower_line and "disconnected" not in lower_line
+        )
+        is_leave = "disconnected player" in lower_line or " disconnected" in lower_line
+
+        if not is_join and not is_leave:
+            return None, None
+
+        return ("leave", self._extract_player_name(line)) if is_leave else ("join", self._extract_player_name(line))
+
     def _extract_player_name(self, line):
-        # Attempt to extract player name from log line
-        # Example log lines:
-        # "Player JohnDoe (123.45.67.89:12345) connected"
-        # "Player JohnDoe (123.45.67.89:12345) disconnected"
-        import re
-        match = re.search(r"Player ([^\s]+) ", line)
-        if match:
-            return match.group(1)
+        # Support common dedicated-server formats:
+        # 1) 7656119... "Xan2" fully connected (...)
+        # 2) Player JohnDoe (ip:port) connected/disconnected
+        quoted_match = re.search(r'"([^"]+)"\s+(?:fully\s+connected|connected|disconnected\s+player)', line, re.IGNORECASE)
+        if quoted_match:
+            return quoted_match.group(1)
+
+        player_match = re.search(r"Player\s+([^\s]+)\s+\(", line, re.IGNORECASE)
+        if player_match:
+            return player_match.group(1)
+
         return None
 
     def append_to_terminal(self, text):

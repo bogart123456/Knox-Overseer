@@ -60,11 +60,52 @@ def test_mod_update_immediate_restart_emits_signal(qapp, monkeypatch):
     assert requested == ["ModUpdate"]
 
 
+def test_fetch_mod_versions_bypasses_cache(qapp, monkeypatch):
+    win = _build_lightweight_window(monkeypatch)
+
+    calls = []
+
+    def _fake_fetch(wid, use_cache=True):
+        calls.append((wid, use_cache))
+        return {"title": f"Mod {wid}", "time_updated": 1}
+
+    win.mods_tab = SimpleNamespace(fetch_mod_details=_fake_fetch)
+
+    versions, names, details = win._fetch_mod_versions([("123", "Test Mod")])
+
+    assert calls == [("123", False)]
+    assert versions == {"123": 1}
+    assert names == {"123": "Mod 123"}
+    assert details["123"]["time_updated"] == 1
+
+
 def test_parse_players_count_response_supports_header_format(qapp, monkeypatch):
     win = _build_lightweight_window(monkeypatch)
     response = "Players connected (2):\nAlice\nBob"
 
     assert win._parse_players_count_response(response) == 2
+
+
+def test_extract_player_event_supports_quoted_fully_connected_format(qapp, monkeypatch):
+    win = _build_lightweight_window(monkeypatch)
+
+    event, name = win._extract_player_event(
+        '[27-03-26 05:24:56.482] 76561199148788174 "Xan2" fully connected (10665,9864,0).'
+    )
+
+    assert event == "join"
+    assert name == "Xan2"
+
+
+def test_extract_player_event_supports_quoted_disconnected_player_format(qapp, monkeypatch):
+    win = _build_lightweight_window(monkeypatch)
+
+    event, name = win._extract_player_event(
+        '[27-03-26 06:40:09.845] 76561199148788174 "Xan2" disconnected player (10673,10621,0).'
+    )
+
+    assert event == "leave"
+    assert name == "Xan2"
 
 
 def test_mod_update_detection_emits_detected_message(qapp, monkeypatch):
