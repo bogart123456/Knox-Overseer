@@ -40,6 +40,26 @@ def test_restart_state_helper(qapp, monkeypatch):
     assert win._is_restart_in_progress() is True
 
 
+def test_handle_auto_restart_handoff_starts_server_after_stop(qapp, monkeypatch):
+    win = _build_lightweight_window(monkeypatch)
+    win._pending_restart = True
+    win._restart_requested = True
+
+    started = {"value": False}
+    monkeypatch.setattr(win, "start_server", lambda: started.__setitem__("value", True))
+    monkeypatch.setattr(win, "_is_server_active", lambda: False)
+
+    events = []
+    win.output_signal.connect(events.append)
+
+    win._handle_auto_restart()
+
+    assert started["value"] is True
+    assert win._pending_restart is False
+    assert win._restart_requested is False
+    assert any("Server fully stopped. Starting again now." in event for event in events)
+
+
 def test_mod_update_immediate_restart_emits_signal(qapp, monkeypatch):
     win = _build_lightweight_window(monkeypatch)
     win._mod_baseline = {"123": 1}
