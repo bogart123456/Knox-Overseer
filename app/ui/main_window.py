@@ -2,7 +2,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
     QPushButton, QTabWidget, QMessageBox, QApplication, QProgressBar
 )
-from PySide6.QtCore import Qt, QTimer, Signal, QSettings, QLockFile
+from PySide6.QtCore import Qt, QTimer, Signal, QLockFile
 import subprocess
 import os
 import sys
@@ -125,6 +125,7 @@ class MainWindow(QMainWindow):
         self._last_auto_restart_enabled = None
         self._mod_baseline = {}
         self._mod_update_pending_restart_at = None
+        self._sent_mod_update_alerts = set()
         self._mod_check_in_progress = False
         self._connected_players = 0
         self._server_starting = False
@@ -855,6 +856,13 @@ class MainWindow(QMainWindow):
             return "servermsg \"Server will restart in 1 minute\""
         return f"servermsg \"Server will restart in {minutes} minutes\""
 
+    def _message_for_mod_update_minutes(self, minutes):
+        if minutes == 60:
+            return "servermsg \"Server will restart for mod update in 1 hour\""
+        if minutes == 1:
+            return "servermsg \"Server will restart for mod update in 1 minute\""
+        return f"servermsg \"Server will restart for mod update in {minutes} minutes\""
+
     def _parse_ini_for_rcon(self, emit_errors=False):
         ini_path = self.settings_tab.ini_path.text().strip()
         if not ini_path:
@@ -992,21 +1000,31 @@ class MainWindow(QMainWindow):
                 'details_by_wid': {wid: details_by_wid.get(wid) for wid in changed_wids}
             })
 
+            # Update baseline immediately to prevent re-detection of the same mods.
+            self._mod_baseline = dict(current_versions)
+
             player_count = self._get_player_count()
             if player_count <= 0:
                 self.output_signal.emit("[ModUpdate] Mod update detected and no players are online. Restarting immediately.")
-                self._mod_baseline = dict(current_versions)
                 self.restart_request_signal.emit("ModUpdate")
                 return
 
+            # Check if a mod update restart is already pending.
+            if self._mod_update_pending_restart_at is not None:
+                # Restart already scheduled; just notify about additional mods.
+                for wid in changed_wids:
+                    mod_name = current_names.get(wid, wid).replace('"', "'")
+                    msg = f'servermsg "The Mod {mod_name} will also be updated in the scheduled restart"'
+                    self._send_server_message(msg)
+                return
+
+            # First mod update for this detection cycle; schedule a restart.
             minutes = self.settings_tab.get_mod_update_alert_minutes()
             self._mod_update_pending_restart_at = datetime.now() + timedelta(minutes=minutes)
             for wid in changed_wids:
                 mod_name = current_names.get(wid, wid).replace('"', "'")
                 msg = f'servermsg "The Mod {mod_name} requires an update, Server will restart in {minutes} minutes"'
                 self._send_server_message(msg)
-
-            self._mod_baseline = dict(current_versions)
         finally:
             self._mod_check_in_progress = False
 
@@ -1027,12 +1045,44 @@ class MainWindow(QMainWindow):
         if not self._is_server_active():
             # Do not fire mod-update restarts while server is stopped.
             self._mod_update_pending_restart_at = None
+            self._sent_mod_update_alerts.clear()
             return
-        if datetime.now() < self._mod_update_pending_restart_at:
+        
+        # Check if players have left during the countdown; if so, restart immediately.
+        player_count = self._get_player_count()
+        if player_count <= 0:
+            self._mod_update_pending_restart_at = None
+            self._sent_mod_update_alerts.clear()
+            self.output_signal.emit("[ModUpdate] All players have left during mod update countdown. Restarting immediately.")
+            self._request_restart("ModUpdate")
             return
-        self._mod_update_pending_restart_at = None
-        self.output_signal.emit("[ModUpdate] Scheduled mod-update restart time reached.")
-        self._request_restart("ModUpdate")
+        
+        now = datetime.now()
+        remaining = (self._mod_update_pending_restart_at - now).total_seconds()
+        alert_start = self.settings_tab.get_alert_start_minutes()
+        
+        # Minute alerts based on selected start threshold (same as autorestart).
+        for minute in [60, 30, 15, 10, 5, 1]:
+            if minute > alert_start:
+                continue
+            if remaining <= minute * 60 and minute not in self._sent_mod_update_alerts:
+                msg = self._message_for_mod_update_minutes(minute)
+                self._send_server_message(msg)
+                self._sent_mod_update_alerts.add(minute)
+        
+        # 10-second countdown at the end.
+        for sec in range(10, 0, -1):
+            key = f"sec-{sec}"
+            if remaining <= sec and key not in self._sent_mod_update_alerts:
+                self._send_server_message(f"servermsg \"Server will restart in {sec} seconds\"")
+                self._sent_mod_update_alerts.add(key)
+        
+        # Trigger restart when time reached.
+        if remaining <= 0:
+            self._mod_update_pending_restart_at = None
+            self._sent_mod_update_alerts.clear()
+            self.output_signal.emit("[ModUpdate] Scheduled mod-update restart time reached.")
+            self._request_restart("ModUpdate")
 
     def update_mod_detection_interval(self):
         interval = self.settings_tab.get_mod_detection_interval_ms()
@@ -1532,6 +1582,7 @@ class MainWindow(QMainWindow):
             self._update_control_buttons()
             self._mod_baseline = {}
             self._mod_update_pending_restart_at = None
+            self._sent_mod_update_alerts.clear()
             self._connected_players = 0
             # Prime baseline shortly after startup.
             QTimer.singleShot(20000, self.check_mod_updates)
@@ -1653,6 +1704,7 @@ class MainWindow(QMainWindow):
             self._restart_requested = False
             self._crash_recovery_pending = False
             self._mod_update_pending_restart_at = None
+            self._sent_mod_update_alerts.clear()
         self._server_starting = False
         self._server_ready = False
         self._server_started_at = None
